@@ -1,0 +1,19 @@
+# never upload local secrets
+.env
+.env.local
+.env.*.local
+
+# Netlify must install/build these itself
+node_modules/
+.next/
+.netlify/
+out/
+dist/
+deploy_ready/
+deploy_ready.zip
+
+# local-only logs and caches
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*

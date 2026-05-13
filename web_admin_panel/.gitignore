@@ -1,0 +1,19 @@
+# local secrets
+.env
+.env.local
+.env.*.local
+
+# dependencies and generated output
+node_modules/
+.next/
+.netlify/
+out/
+dist/
+deploy_ready/
+deploy_ready.zip
+
+# logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*

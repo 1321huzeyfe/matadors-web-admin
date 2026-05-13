@@ -1,0 +1,8 @@
+web_admin_panel/.env.local
+web_admin_panel/.next/
+web_admin_panel/node_modules/
+web_admin_panel/deploy_ready/
+*.zip
+assets/*.json
+**/__pycache__/
+*.pyc

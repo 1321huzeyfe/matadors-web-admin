@@ -1,0 +1,262 @@
+import { branchOf, loadPanelData, Row } from "../lib/supabase-readonly";
+import { isPageAuthenticated } from "../lib/auth";
+import BranchFilter from "./branch-filter";
+import LoginForm from "./login-form";
+import LogoutButton from "./logout-button";
+
+export const dynamic = "force-dynamic";
+
+function money(value: number) {
+  return new Intl.NumberFormat("tr-TR", { style: "currency", currency: "TRY" }).format(value || 0);
+}
+
+function numberText(value: number) {
+  return new Intl.NumberFormat("tr-TR").format(value || 0);
+}
+
+function dateText(value: unknown) {
+  const raw = value ? String(value) : "";
+  if (!raw) return "-";
+  const date = new Date(raw);
+  if (Number.isNaN(date.getTime())) return raw;
+  return new Intl.DateTimeFormat("tr-TR", { dateStyle: "short", timeStyle: "short" }).format(date);
+}
+
+function first(row: Row, keys: string[], fallback = "-") {
+  for (const key of keys) {
+    const value = row[key];
+    if (value !== undefined && value !== null && String(value).trim() !== "") return String(value);
+  }
+  return fallback;
+}
+
+function balanceClass(value: number) {
+  if (value > 0) return "positive";
+  if (value < 0) return "negative";
+  return "neutral";
+}
+
+function branchLabel(value: string) {
+  const clean = String(value || "").trim() || "genel-kasa";
+  if (clean === "genel-kasa") return "genel-kasa";
+  const spaced = clean
+    .replace(/[_-]+/g, " ")
+    .replace(/\bkasa\s*(\d+)\b/gi, "Kasa $1")
+    .replace(/\bbranch\s*(\d+)\b/gi, "Kasa $1")
+    .replace(/\bprofile\s*(\d+)\b/gi, "Profil $1");
+  return spaced.charAt(0).toLocaleUpperCase("tr-TR") + spaced.slice(1);
+}
+
+function rowBranch(row: Row, selectedBranch = "") {
+  return branchLabel(
+    branchOf(row)
+      || first(row, ["cashier_id", "device_id", "user_id", "cashier", "kasa", "branch", "profile"], "")
+      || selectedBranch
+      || "genel-kasa"
+  );
+}
+
+function Icon({ name }: { name: "overview" | "cash" | "users" | "box" | "moves" | "branches" | "report" | "settings" | "refresh" | "chevron" }) {
+  const paths = {
+    overview: "M3 10.5 12 3l9 7.5V21h-6v-6H9v6H3V10.5Z",
+    cash: "M4 7h16v10H4V7Zm3 3h2m6 4h2m-5-5a3 3 0 1 0 0 6 3 3 0 0 0 0-6Z",
+    users: "M8 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6Zm8-1a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5ZM3 19a5 5 0 0 1 10 0H3Zm10.5 0a4 4 0 0 1 7.5 0h-7.5Z",
+    box: "M4 8.5 12 4l8 4.5v7L12 20l-8-4.5v-7Zm8 3.5 8-4.5M12 12 4 7.5m8 4.5v8",
+    moves: "M4 17h4l3-9 4 8 2-5h3",
+    branches: "M5 8h14M7 8v11m10-11v11M4 19h16M8 5h8",
+    report: "M7 4h7l3 3v13H7V4Zm7 0v4h4M9 12h6M9 16h6M9 8h3",
+    settings: "M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8Zm8 4h-2m-12 0H4m13.66-5.66-1.42 1.42M7.76 16.24l-1.42 1.42m11.32 0-1.42-1.42M7.76 7.76 6.34 6.34",
+    refresh: "M20 6v5h-5M4 18v-5h5m9.5-4A7 7 0 0 0 6.2 7.7M5.5 15A7 7 0 0 0 17.8 16.3",
+    chevron: "m9 18 6-6-6-6"
+  };
+
+  return (
+    <svg aria-hidden="true" viewBox="0 0 24 24" className="icon">
+      <path d={paths[name]} />
+    </svg>
+  );
+}
+
+function Sidebar() {
+  return (
+    <aside className="sidebar">
+      <div className="brand">
+        <div className="brand-logo">
+          <img src="/matadors-logo.jpg" alt="Matadors logo" />
+        </div>
+        <div>
+          <strong>MATADORS</strong>
+          <span>Yönetici Paneli</span>
+        </div>
+      </div>
+
+      <nav className="side-nav" aria-label="Panel menüsü">
+        <a className="side-link active" href="#">
+          <Icon name="overview" />
+          Özet
+        </a>
+      </nav>
+
+      <div className="system-card">
+        <strong>Matadors App</strong>
+        <span>V1.1</span>
+        <div className="system-status"><span className="status-dot" /> Sistem Aktif</div>
+      </div>
+    </aside>
+  );
+}
+
+function StatCard({ tone, icon, label, value, hint }: { tone: "blue" | "green" | "purple" | "orange"; icon: "users" | "cash" | "box" | "moves"; label: string; value: string; hint: string }) {
+  return (
+    <article className="stat-card">
+      <div className={`stat-icon ${tone}`}><Icon name={icon} /></div>
+      <div className="stat-copy">
+        <span>{label}</span>
+        <strong>{value}</strong>
+        <small>{hint}</small>
+      </div>
+    </article>
+  );
+}
+
+function Pager({ total, pageSize }: { total: number; pageSize: number }) {
+  const pages = Math.max(1, Math.ceil(total / pageSize));
+  return (
+    <div className="pager" aria-label="Sayfalama">
+      <button type="button" disabled><Icon name="chevron" /></button>
+      <button type="button" className="active">1</button>
+      {pages > 1 && <button type="button">2</button>}
+      {pages > 2 && <button type="button">3</button>}
+      {pages > 4 && <span>...</span>}
+      {pages > 3 && <button type="button">{pages}</button>}
+      <button type="button" disabled={pages <= 1}><Icon name="chevron" /></button>
+    </div>
+  );
+}
+
+export default async function Page({ searchParams }: { searchParams?: { branch?: string } }) {
+  if (!isPageAuthenticated()) {
+    return <LoginForm />;
+  }
+
+  const selectedBranch = searchParams?.branch || "";
+  const data = await loadPanelData(selectedBranch);
+  const activeBranchLabel = selectedBranch ? branchLabel(selectedBranch) : "Tüm Kasalar";
+  const visibleBalances = data.balances.slice(0, 10);
+  const visibleStock = data.stock.slice(0, 10);
+
+  return (
+    <div className="admin-layout">
+      <Sidebar />
+
+      <main className="content-shell">
+        <header className="overview-card">
+          <div className="overview-title">
+            <h1>Özet</h1>
+            <span>Sistem durumu ve genel bakış</span>
+            <small>{activeBranchLabel} için son güncelleme: {dateText(data.summary.updatedAt)}</small>
+          </div>
+          <div className="topbar-actions">
+            <BranchFilter branches={data.branches} selected={selectedBranch} />
+            <a className="button button-secondary" href={selectedBranch ? `/?branch=${encodeURIComponent(selectedBranch)}` : "/"}>
+              <Icon name="refresh" />
+              Yenile
+            </a>
+            <LogoutButton />
+          </div>
+        </header>
+
+        {data.errors.length > 0 && (
+          <section className="error-box">
+            Veri alınamadı. Supabase bağlantısını kontrol edin.
+          </section>
+        )}
+
+        <section className="metrics" aria-label="Özet kartları">
+          <StatCard tone="blue" icon="users" label="Toplam Müşteri" value={numberText(data.summary.customerCount)} hint="Aktif müşteriler" />
+          <StatCard tone="green" icon="cash" label="Toplam Bakiye" value={money(data.summary.totalBalance)} hint="Tüm müşterilerin bakiyesi" />
+          <StatCard tone="purple" icon="box" label="Toplam Ürün" value={numberText(data.summary.productCount)} hint="Stoktaki ürün sayısı" />
+          <StatCard tone="orange" icon="moves" label="Toplam Stok" value={numberText(data.summary.totalStock)} hint="Tüm ürün stokları" />
+        </section>
+
+        <section className="panel-grid primary-panels">
+          <article id="customers" className="panel data-panel">
+            <div className="panel-heading">
+              <div className="panel-title">
+                <span className="panel-icon blue"><Icon name="users" /></span>
+                <h2>Müşteri Bakiyeleri</h2>
+              </div>
+              <a className="view-all" href="#customers">Tümünü Gör <Icon name="chevron" /></a>
+            </div>
+            <div className="table-frame">
+              <table>
+                <thead><tr><th>Müşteri</th><th>Kasa</th><th className="numeric">Bakiye</th></tr></thead>
+                <tbody>
+                  {visibleBalances.length === 0 && <tr><td className="empty" colSpan={3}>Kayıt yok</td></tr>}
+                  {visibleBalances.map((customer) => (
+                    <tr key={`${customer.branch}-${customer.name}`}>
+                      <td className="strong-cell">{customer.name}</td>
+                      <td>{branchLabel(customer.branch || "genel-kasa")}</td>
+                      <td className={`numeric ${balanceClass(customer.balance)}`}>{money(customer.balance)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <footer className="panel-footer">
+              <span>Toplam {numberText(data.balances.length)} müşteri</span>
+              <Pager total={data.balances.length} pageSize={10} />
+            </footer>
+          </article>
+
+          <article id="products" className="panel data-panel">
+            <div className="panel-heading">
+              <div className="panel-title">
+                <span className="panel-icon purple"><Icon name="box" /></span>
+                <h2>Ürün Stokları</h2>
+              </div>
+              <a className="view-all" href="#products">Tümünü Gör <Icon name="chevron" /></a>
+            </div>
+            <div className="table-frame">
+              <table>
+                <thead><tr><th>Ürün</th><th>Kasa</th><th className="numeric">Stok</th><th className="numeric">Fiyat</th></tr></thead>
+                <tbody>
+                  {visibleStock.length === 0 && <tr><td className="empty" colSpan={4}>Kayıt yok</td></tr>}
+                  {visibleStock.map((product) => (
+                    <tr key={`${product.branch}-${product.name}`}>
+                      <td className="strong-cell">{product.name}</td>
+                      <td>{branchLabel(product.branch || "genel-kasa")}</td>
+                      <td className="numeric">{numberText(product.stock)}</td>
+                      <td className="numeric">{money(product.price)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <footer className="panel-footer">
+              <span>Toplam {numberText(data.stock.length)} ürün</span>
+              <Pager total={data.stock.length} pageSize={10} />
+            </footer>
+          </article>
+        </section>
+
+        <section id="branches" className="mini-grid">
+          <article className="mini-card">
+            <strong>Bugünkü satış</strong>
+            <span>{money(data.summary.todayTotal)}</span>
+          </article>
+          <article id="moves" className="mini-card">
+            <strong>Satış adedi</strong>
+            <span>{numberText(data.summary.saleCount)}</span>
+          </article>
+          <article className="mini-card">
+            <strong>Kasa özeti</strong>
+            <span>{numberText(data.byBranch.length)} kasa</span>
+          </article>
+        </section>
+
+        <footer className="page-footer">© 2025 Matadors App. Tüm hakları saklıdır.</footer>
+      </main>
+    </div>
+  );
+}
