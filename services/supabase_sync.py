@@ -33,6 +33,7 @@ LOG_FILE = Path(get_data_dir()) / "logs" / "supabase_sync.log"
 DEVICE_CONFIG_FILE = Path(get_data_dir()) / "config.json"
 BATCH_SIZE = 100
 BRANCH_COLUMNS = ("branch_id", "profile_id", "kasa_id", "cashier_id")
+BUSINESS_TABLES_REQUIRING_BRANCH = ("customers", "products", "sales")
 
 
 def _now() -> str:
@@ -427,6 +428,11 @@ def _branch_for_cashier_id(conn: sqlite3.Connection, cashier_id: Any) -> str:
     return ""
 
 
+def _is_missing_cashier_id(value: Any) -> bool:
+    text = str(value or "").strip()
+    return text in ("", "0", "None", "none", "null")
+
+
 def _auth_password_hash_for_user(db_path: str | Path, payload: dict[str, Any]) -> str:
     candidates = []
     try:
@@ -487,10 +493,14 @@ def enrich_payload_for_supabase(db_path: str | Path, table: str, payload: dict[s
                     cashier_id = sale["cashier_id"]
                     enriched["cashier_id"] = cashier_id
             branch_id = _branch_for_cashier_id(conn, cashier_id)
+            if table in BUSINESS_TABLES_REQUIRING_BRANCH and _is_missing_cashier_id(cashier_id):
+                raise RuntimeError(f"{table} satiri cashier_id olmadan Supabase'e gonderilemez.")
             if branch_id:
                 enriched.setdefault("branch_id", branch_id)
                 enriched.setdefault("profile_id", branch_id)
                 enriched.setdefault("kasa_id", branch_id)
+            if table in BUSINESS_TABLES_REQUIRING_BRANCH and not branch_id:
+                raise RuntimeError(f"{table} satiri icin kalici kasa kimligi uretilemedi.")
             enriched.setdefault("device_id", get_device_id())
     except Exception as exc:
         LOGGER.warning("%s | Supabase metadata eklenemedi | row_id=%s | hata=%s", table, payload.get("id"), exc)

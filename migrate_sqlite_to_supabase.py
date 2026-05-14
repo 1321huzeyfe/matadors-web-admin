@@ -27,6 +27,18 @@ BATCH_SIZE = 100
 _SUPABASE = None
 
 
+def cashier_branch_id(conn: sqlite3.Connection, cashier_id: Any) -> str:
+    if cashier_id in (None, "", 0, "0"):
+        return ""
+    try:
+        row = conn.execute("SELECT username FROM users WHERE id = ?", (cashier_id,)).fetchone()
+        if row and row["username"]:
+            return str(row["username"]).strip().lower().replace(" ", "_")
+    except Exception:
+        pass
+    return f"cashier_{cashier_id}"
+
+
 def setup_logging() -> Path:
     LOG_DIR.mkdir(parents=True, exist_ok=True)
     log_path = LOG_DIR / f"supabase_migration_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.log"
@@ -72,10 +84,21 @@ def read_rows(conn: sqlite3.Connection, table: str) -> list[dict[str, Any]]:
     columns = sqlite_columns(conn, table)
     col_sql = ", ".join(quote_identifier(column) for column in columns)
     rows = conn.execute(f"SELECT {col_sql} FROM {quote_identifier(table)} ORDER BY id").fetchall()
-    return [
+    rows = [
         {column: normalize_value(row[column]) for column in columns}
         for row in rows
     ]
+    if table in ("customers", "products", "sales"):
+        for row in rows:
+            cashier_id = row.get("cashier_id")
+            branch_id = cashier_branch_id(conn, cashier_id)
+            if not cashier_id or not branch_id:
+                raise RuntimeError(f"{table} id={row.get('id')} kasa kimligi olmadan aktarilamaz.")
+            row["branch_id"] = branch_id
+            row["profile_id"] = branch_id
+            row["kasa_id"] = branch_id
+            row["cashier_id"] = cashier_id
+    return rows
 
 
 def get_supabase_client():

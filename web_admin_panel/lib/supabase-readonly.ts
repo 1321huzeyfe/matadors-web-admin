@@ -1,4 +1,4 @@
-export type Row = Record<string, unknown>;
+﻿export type Row = Record<string, unknown>;
 
 export type PanelData = {
   errors: string[];
@@ -20,6 +20,8 @@ export type PanelData = {
   sales: Row[];
   balances: Array<{ name: string; branch: string; stableBranchKey: string; balance: number }>;
   stock: Array<{ id: string; name: string; category: string; branch: string; stableBranchKey: string; stock: number; price: number }>;
+  unmatchedBalances: Array<{ name: string; balance: number }>;
+  unmatchedStock: Array<{ id: string; name: string; category: string; stock: number; price: number }>;
   byBranch: Array<{ branch: string; stableBranchKey: string; todayTotal: number; saleCount: number; customerCount: number; productCount: number; userCount: number }>;
   debug: {
     apiCustomers: number;
@@ -33,6 +35,8 @@ export type PanelData = {
     customersAfter: number;
     productsBefore: number;
     productsAfter: number;
+    unmatchedCustomers: number;
+    unmatchedProducts: number;
   };
 };
 
@@ -295,6 +299,10 @@ function filterRealBranches(rows: Row[], scope: ReturnType<typeof buildBranchGro
   return rows.filter((row) => isActive(row) && isRealBranchRow(row, scope));
 }
 
+function filterUnmatchedRows(rows: Row[], scope: ReturnType<typeof buildBranchGroups>): Row[] {
+  return rows.filter((row) => isActive(row) && !isRealBranchRow(row, scope));
+}
+
 function filterBranch(rows: Row[], group?: BranchGroup): Row[] {
   if (!group) return rows;
   return rows.filter((row) => matchingGroup(row, [group]));
@@ -356,6 +364,8 @@ export async function loadPanelData(selectedBranch = ""): Promise<PanelData> {
   const customersAll = filterRealBranches(customersRaw, scope);
   const productsAll = filterRealBranches(productsRaw, scope);
   const salesAll = filterRealBranches(salesRaw, scope);
+  const unmatchedCustomers = filterUnmatchedRows(customersRaw, scope);
+  const unmatchedProducts = filterUnmatchedRows(productsRaw, scope);
 
   const users = filterBranch(usersAll, activeGroup);
   const customers = filterBranch(customersAll, activeGroup);
@@ -421,6 +431,17 @@ export async function loadPanelData(selectedBranch = ""): Promise<PanelData> {
       stock: stock(product),
       price: price(product)
     })).sort((a, b) => a.name.localeCompare(b.name, "tr")).slice(0, 200),
+    unmatchedBalances: unmatchedCustomers.map((customer) => ({
+      name: first(customer, ["name", "full_name", "customer_name", "ad_soyad"], "-"),
+      balance: balance(customer)
+    })).sort((a, b) => a.name.localeCompare(b.name, "tr")).slice(0, 200),
+    unmatchedStock: unmatchedProducts.map((product) => ({
+      id: first(product, ["id"], ""),
+      name: first(product, ["name", "product_name", "title", "urun_adi"], "-"),
+      category: first(product, ["category", "kategori"], ""),
+      stock: stock(product),
+      price: price(product)
+    })).sort((a, b) => a.name.localeCompare(b.name, "tr")).slice(0, 200),
     byBranch: Array.from(byBranchMap.values())
       .filter((item) => !effectiveBranch || item.stableBranchKey === effectiveBranch)
       .sort((a, b) => a.branch.localeCompare(b.branch, "tr")),
@@ -430,12 +451,14 @@ export async function loadPanelData(selectedBranch = ""): Promise<PanelData> {
       apiSales: salesResult.rows.length,
       filteredCustomers: customers.length,
       filteredProducts: products.length,
-      selectedBranch: effectiveBranch || "Tüm Kasalar",
+      selectedBranch: activeGroup?.label || "Tüm Kasalar",
       selectedKey: effectiveBranch || "ALL",
-      customersBefore: customersAll.length,
+      customersBefore: customersRaw.filter(isActive).length,
       customersAfter: customers.length,
-      productsBefore: productsAll.length,
-      productsAfter: products.length
+      productsBefore: productsRaw.filter(isActive).length,
+      productsAfter: products.length,
+      unmatchedCustomers: unmatchedCustomers.length,
+      unmatchedProducts: unmatchedProducts.length
     }
   };
 }

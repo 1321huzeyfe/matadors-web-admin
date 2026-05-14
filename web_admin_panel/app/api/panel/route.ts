@@ -35,6 +35,8 @@ export async function GET(request: NextRequest) {
       sales: [],
       balances: [],
       stock: [],
+      unmatchedBalances: [],
+      unmatchedStock: [],
       byBranch: [],
       debug: {
         apiCustomers: 0,
@@ -47,7 +49,9 @@ export async function GET(request: NextRequest) {
         customersBefore: 0,
         customersAfter: 0,
         productsBefore: 0,
-        productsAfter: 0
+        productsAfter: 0,
+        unmatchedCustomers: 0,
+        unmatchedProducts: 0
       }
     }, { headers: { "Cache-Control": "no-store" } });
   }
