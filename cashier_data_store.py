@@ -1,0 +1,162 @@
+# -*- coding: utf-8 -*-
+"""Per-cashier JSON data mirror for the isolated kasa folders."""
+
+from __future__ import annotations
+
+import json
+import os
+import sqlite3
+from contextlib import closing
+from datetime import datetime
+from pathlib import Path
+
+from profile_manager import Profile
+from safe_io import atomic_write_json
+
+
+class CashierDataStore:
+    """Exports one cashier database into the external data folder under local/<kasa>/db."""
+
+    def export_profile(self, profile: Profile) -> dict:
+        if not profile.local_db_path.exists():
+            self.ensure_profile_files(profile)
+            return {"customers": 0, "products": 0, "transactions": 0}
+        profile.kasa_dir.mkdir(parents=True, exist_ok=True)
+        self.ensure_profile_files(profile)
+        customers = self._read_customers(profile.local_db_path)
+        products = self._read_products(profile.local_db_path)
+        transactions = self._read_transactions(profile.local_db_path)
+        self._write_json(profile.customers_json_path, customers)
+        self._write_json(profile.products_json_path, products)
+        self._write_json(profile.transactions_json_path, transactions)
+        self._write_metadata(profile, len(customers), len(products), len(transactions))
+        return {"customers": len(customers), "products": len(products), "transactions": len(transactions)}
+
+    def ensure_profile_files(self, profile: Profile) -> None:
+        for folder in (
+            profile.kasa_dir,
+            profile.kasa_db_dir,
+            profile.kasa_backups_dir,
+            profile.kasa_reports_dir,
+            profile.kasa_logs_dir,
+        ):
+            folder.mkdir(parents=True, exist_ok=True)
+        for path in (profile.customers_json_path, profile.products_json_path, profile.transactions_json_path):
+            if not path.exists():
+                self._write_json(path, [])
+
+    def read_customers(self, profile: Profile, search_text: str = "") -> list[dict]:
+        rows = self._read_json(profile.customers_json_path)
+        q = (search_text or "").strip().casefold()
+        if q:
+            rows = [
+                row for row in rows
+                if q in str(row.get("name", "")).casefold()
+                or q in str(row.get("phone", "")).casefold()
+                or q in str(row.get("note", "")).casefold()
+            ]
+        return sorted(rows, key=lambda row: str(row.get("name", "")).casefold())
+
+    def read_transactions(self, profile: Profile) -> list[dict]:
+        return self._read_json(profile.transactions_json_path)
+
+    def read_products(self, profile: Profile) -> list[dict]:
+        return self._read_json(profile.products_json_path)
+
+    def _read_customers(self, db_path: Path) -> list[dict]:
+        with closing(sqlite3.connect(str(db_path))) as conn:
+            conn.row_factory = sqlite3.Row
+            if not self._has_table(conn, "customers"):
+                return []
+            rows = conn.execute(
+                """
+                SELECT *
+                FROM customers
+                WHERE COALESCE(archived, 0) = 0 AND COALESCE(is_active, 1) = 1
+                ORDER BY name COLLATE NOCASE
+                """
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def _read_products(self, db_path: Path) -> list[dict]:
+        with closing(sqlite3.connect(str(db_path))) as conn:
+            conn.row_factory = sqlite3.Row
+            if not self._has_table(conn, "products"):
+                return []
+            rows = conn.execute(
+                """
+                SELECT *
+                FROM products
+                WHERE COALESCE(archived, 0) = 0 AND COALESCE(is_active, 1) = 1
+                ORDER BY name COLLATE NOCASE
+                """
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def _read_transactions(self, db_path: Path) -> list[dict]:
+        out: list[dict] = []
+        with closing(sqlite3.connect(str(db_path))) as conn:
+            conn.row_factory = sqlite3.Row
+            tables = {row["name"] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+            if "transactions" in tables:
+                tx_cols = self._columns(conn, "transactions")
+                tx_cashier = "t.cashier_id" if "cashier_id" in tx_cols else "0"
+                out.extend(dict(row) for row in conn.execute(
+                    f"""
+                    SELECT t.id, t.customer_id, COALESCE(c.name, '') AS customer_name,
+                           {tx_cashier} AS cashier_id, t.amount, t.action_type, t.note, t.created_at,
+                           'balance' AS source
+                    FROM transactions t
+                    LEFT JOIN customers c ON c.id = t.customer_id
+                    ORDER BY t.created_at DESC, t.id DESC
+                    """
+                ).fetchall())
+            if "sales" in tables:
+                sales_cols = self._columns(conn, "sales")
+                sale_cashier = "s.cashier_id" if "cashier_id" in sales_cols else "0"
+                sale_customer = "s.customer_id" if "customer_id" in sales_cols else "0"
+                sale_customer_name = "COALESCE(c.name, '')" if "customer_id" in sales_cols else "''"
+                sale_action = "s.payment_method" if "payment_method" in sales_cols else "'sale'"
+                sale_note = "s.note" if "note" in sales_cols else "''"
+                sale_join = "LEFT JOIN customers c ON c.id = s.customer_id" if "customer_id" in sales_cols else ""
+                out.extend(dict(row) for row in conn.execute(
+                    f"""
+                    SELECT s.id, {sale_customer} AS customer_id, {sale_customer_name} AS customer_name,
+                           {sale_cashier} AS cashier_id, s.total AS amount, {sale_action} AS action_type,
+                           {sale_note} AS note, s.created_at, 'sale' AS source
+                    FROM sales s
+                    {sale_join}
+                    ORDER BY s.created_at DESC, s.id DESC
+                    """
+                ).fetchall())
+        out.sort(key=lambda row: str(row.get("created_at", "")), reverse=True)
+        return out
+
+    def _has_table(self, conn, table: str) -> bool:
+        return conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)).fetchone() is not None
+
+    def _columns(self, conn, table: str) -> set[str]:
+        return {row["name"] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+
+    def _read_json(self, path: Path) -> list[dict]:
+        if not path.exists():
+            return []
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return []
+        return data if isinstance(data, list) else []
+
+    def _write_json(self, path: Path, rows: list[dict]) -> None:
+        atomic_write_json(path, rows)
+
+    def _write_metadata(self, profile: Profile, customers: int, products: int, transactions: int) -> None:
+        payload = {
+            "username": profile.username,
+            "updated_at": datetime.now().isoformat(timespec="seconds"),
+            "customers": customers,
+            "products": products,
+            "transactions": transactions,
+        }
+        path = profile.kasa_db_dir / "data_status.json"
+        atomic_write_json(path, payload)

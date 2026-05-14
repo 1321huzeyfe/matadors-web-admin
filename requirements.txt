@@ -1,0 +1,7 @@
+customtkinter
+cryptography
+pyinstaller
+reportlab
+requests
+supabase
+tkcalendar

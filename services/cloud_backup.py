@@ -1,0 +1,281 @@
+# -*- coding: utf-8 -*-
+"""Google Drive service-account backup helpers with explicit diagnostics."""
+
+from __future__ import annotations
+
+import io
+import json
+import os
+import re
+import tempfile
+from datetime import datetime
+from pathlib import Path
+from typing import Any
+
+
+DRIVE_FOLDER_MIME = "application/vnd.google-apps.folder"
+DRIVE_SCOPE = "https://www.googleapis.com/auth/drive"
+
+
+def clean_path_text(value: str) -> str:
+    """Clean quotes, whitespace and invisible characters from a Windows path."""
+    cleaned = str(value or "")
+    cleaned = cleaned.replace("\ufeff", "").replace("\u200b", "").replace("\u200c", "").replace("\u200d", "")
+    cleaned = cleaned.strip().strip('"').strip("'").strip()
+    return os.path.expandvars(cleaned)
+
+
+def clean_drive_folder_id(value: str) -> str:
+    """Return a Drive folder id from a raw id or folder URL."""
+    cleaned = clean_path_text(value)
+    if not cleaned:
+        raise RuntimeError(
+            "Drive klasör ID boş. Google Drive'da hedef klasörü açıp URL'deki klasör ID'sini girin."
+        )
+    for pattern in (r"/folders/([A-Za-z0-9_-]+)", r"[?&]id=([A-Za-z0-9_-]+)"):
+        match = re.search(pattern, cleaned)
+        if match:
+            cleaned = match.group(1)
+            break
+    if "/" in cleaned or "\\" in cleaned or " " in cleaned or not re.fullmatch(r"[A-Za-z0-9_-]{10,}", cleaned):
+        raise RuntimeError(
+            "Drive klasör ID geçersiz. Klasör yolu değil, Google Drive klasör ID'si kullanılmalı."
+        )
+    return cleaned
+
+
+def resolve_service_account_path(service_account_json: str) -> Path:
+    """Resolve the configured JSON path, with diagnostics-friendly fallbacks."""
+    cleaned = clean_path_text(service_account_json)
+    path = Path(cleaned)
+    if os.path.exists(Path(cleaned)):
+        return path
+
+    # Common Windows Explorer trap: extensions hidden, user names file
+    # service_account.json but actual file becomes service_account.json.json.
+    fallback = Path(cleaned + ".json")
+    if cleaned.lower().endswith(".json") and os.path.exists(fallback):
+        return fallback
+    return path
+
+
+def service_account_path_diagnostics(service_account_json: str) -> dict[str, Any]:
+    cleaned = clean_path_text(service_account_json)
+    path = Path(cleaned)
+    fallback = Path(cleaned + ".json") if cleaned.lower().endswith(".json") else None
+    return {
+        "raw_path": str(service_account_json or ""),
+        "json_path": cleaned,
+        "resolved_path": str(resolve_service_account_path(service_account_json)),
+        "exists": os.path.exists(path),
+        "resolved_exists": os.path.exists(resolve_service_account_path(service_account_json)),
+        "cwd": os.getcwd(),
+        "fallback_json_json": str(fallback) if fallback else "",
+        "fallback_exists": bool(fallback and os.path.exists(fallback)),
+    }
+
+
+def read_service_account_info(service_account_json: str) -> dict[str, Any]:
+    diagnostics = service_account_path_diagnostics(service_account_json)
+    path = resolve_service_account_path(service_account_json)
+    if not os.path.exists(path):
+        raise FileNotFoundError(
+            "Service account JSON dosyası bulunamadı.\n"
+            f"Kullanılan json_path: {diagnostics['json_path']}\n"
+            f"Çözümlenen path: {diagnostics['resolved_path']}\n"
+            f"os.path.exists: {diagnostics['exists']}\n"
+            f"resolved exists: {diagnostics['resolved_exists']}\n"
+            f"current working directory: {diagnostics['cwd']}\n"
+            f".json.json aday: {diagnostics['fallback_json_json']}\n"
+            f".json.json exists: {diagnostics['fallback_exists']}"
+        )
+    if not path.is_file():
+        raise FileNotFoundError(
+            "Service account JSON yolu dosya değil.\n"
+            f"Kullanılan json_path: {diagnostics['json_path']}\n"
+            f"Çözümlenen path: {diagnostics['resolved_path']}\n"
+            f"current working directory: {diagnostics['cwd']}"
+        )
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        raise RuntimeError(f"Service account JSON okunamadı: {exc}") from exc
+    client_email = (data.get("client_email") or "").strip()
+    if not client_email:
+        raise RuntimeError("Service account JSON içinde client_email bulunamadı.")
+    return data
+
+
+def build_drive_service(service_account_json: str):
+    from google.oauth2 import service_account
+    from googleapiclient.discovery import build
+
+    json_path = str(resolve_service_account_path(service_account_json))
+    read_service_account_info(json_path)
+    credentials = service_account.Credentials.from_service_account_file(
+        json_path,
+        scopes=[DRIVE_SCOPE],
+    )
+    return build("drive", "v3", credentials=credentials, cache_discovery=False)
+
+
+def get_drive_folder_metadata(service, folder_id: str, service_account_email: str = "") -> dict[str, str]:
+    clean_id = clean_drive_folder_id(folder_id)
+    try:
+        metadata = service.files().get(fileId=clean_id, fields="id,name,mimeType", supportsAllDrives=True).execute()
+    except Exception as exc:
+        extra = (
+            f"\nService account e-postasını hedef klasöre Editor olarak ekleyin: {service_account_email}"
+            if service_account_email
+            else "\nService account e-postasını hedef klasöre Editor olarak ekleyin."
+        )
+        raise RuntimeError(
+            "Drive klasör ID boş, geçersiz veya service account bu klasöre erişemiyor."
+            f"{extra}\nGoogle hata detayı: {exc}"
+        ) from exc
+    if metadata.get("mimeType") != DRIVE_FOLDER_MIME:
+        raise RuntimeError(f"Verilen Drive ID bir klasör değil. mimeType={metadata.get('mimeType')}")
+    return metadata
+
+
+def upload_file_to_drive(
+    local_path: str,
+    service_account_json: str,
+    drive_folder_id: str,
+    name_prefix: str = "",
+    drive_name: str = "",
+    mimetype: str = "application/octet-stream",
+) -> str:
+    from googleapiclient.http import MediaFileUpload
+
+    source = Path(local_path)
+    if not source.exists() or source.stat().st_size <= 0:
+        raise FileNotFoundError(f"Yüklenecek dosya bulunamadı veya boş: {source}")
+
+    folder_id = clean_drive_folder_id(drive_folder_id)
+    service_info = read_service_account_info(service_account_json)
+    service_account_email = service_info.get("client_email", "")
+    service = build_drive_service(service_account_json)
+    get_drive_folder_metadata(service, folder_id, service_account_email)
+
+    name = drive_name.strip() if drive_name else (f"{name_prefix}{source.name}" if name_prefix else source.name)
+    metadata = {"name": name, "parents": [folder_id]}
+    media = MediaFileUpload(str(source), mimetype=mimetype, resumable=False)
+    try:
+        result = service.files().create(
+            body=metadata,
+            media_body=media,
+            fields="id,name,webViewLink",
+            supportsAllDrives=True,
+        ).execute()
+    except Exception as exc:
+        text = str(exc)
+        if "storageQuotaExceeded" in text or "Service Accounts do not have storage quota" in text:
+            raise RuntimeError(
+                "Drive upload başarısız: Service Account depolama kotasına sahip değil.\n"
+                f"Upload hedef klasör ID'sine parents=[{folder_id}] ile gönderildi.\n"
+                f"Service account e-postasını hedef klasöre Editor olarak ekleyin: {service_account_email}\n"
+                "Kişisel My Drive klasöründe aynı kota hatası devam ederse hedef klasörü Shared Drive içinde kullanın "
+                "veya kullanıcı OAuth girişi/domain-wide delegation kurun.\n"
+                f"Google hata detayı: {exc}"
+            ) from exc
+        raise
+    return result.get("webViewLink") or f"https://drive.google.com/file/d/{result['id']}/view"
+
+
+def upload_encrypted_db_to_drive(
+    db_path: str,
+    fernet_key: str,
+    service_account_json: str,
+    admin_email: str = "",
+    drive_folder_id: str = "",
+):
+    """Encrypt and upload the DB to Drive. admin_email is kept for compatibility."""
+    from cryptography.fernet import Fernet
+
+    if not fernet_key:
+        raise ValueError("Fernet şifreleme anahtarı boş olamaz.")
+
+    source = Path(db_path)
+    if not source.exists():
+        raise FileNotFoundError(f"Veritabanı dosyası bulunamadı: {source}")
+
+    encrypted_name = f"matadors_kasa_{datetime.now().strftime('%Y%m%d_%H%M%S')}.db.fernet"
+    with source.open("rb") as db_file:
+        encrypted = Fernet(fernet_key.encode("utf-8")).encrypt(db_file.read())
+
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".db.fernet") as temp:
+        temp.write(encrypted)
+        temp_path = temp.name
+    try:
+        return upload_file_to_drive(
+            temp_path,
+            service_account_json,
+            drive_folder_id,
+            drive_name=encrypted_name,
+            mimetype="application/octet-stream",
+        )
+    finally:
+        try:
+            os.unlink(temp_path)
+        except OSError:
+            pass
+
+
+def test_drive_connection(service_account_json: str, drive_folder_id: str) -> dict[str, Any]:
+    """Run a step-by-step Drive API diagnostic and upload a small test file."""
+    folder_id = clean_drive_folder_id(drive_folder_id)
+    diagnostics = service_account_path_diagnostics(service_account_json)
+    json_path = diagnostics["resolved_path"]
+    result: dict[str, Any] = {
+        "json_path": diagnostics["json_path"],
+        "resolved_path": json_path,
+        "json_exists": diagnostics["exists"],
+        "resolved_exists": diagnostics["resolved_exists"],
+        "cwd": diagnostics["cwd"],
+        "folder_id": folder_id,
+        "client_email": "",
+        "credentials_loaded": False,
+        "service_created": False,
+        "folder_metadata": None,
+        "test_upload_link": "",
+        "ok": False,
+    }
+
+    info = read_service_account_info(json_path)
+    result["resolved_exists"] = True
+    result["client_email"] = info.get("client_email", "")
+
+    service = build_drive_service(json_path)
+    result["credentials_loaded"] = True
+    result["service_created"] = True
+
+    metadata = get_drive_folder_metadata(service, folder_id, result["client_email"])
+    result["folder_metadata"] = metadata
+
+    from googleapiclient.http import MediaIoBaseUpload
+
+    test_name = f"matadors_drive_test_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+    media = MediaIoBaseUpload(io.BytesIO(b"Matadors Drive test"), mimetype="text/plain", resumable=False)
+    try:
+        upload = service.files().create(
+            body={"name": test_name, "parents": [folder_id]},
+            media_body=media,
+            fields="id,name,webViewLink",
+            supportsAllDrives=True,
+        ).execute()
+    except Exception as exc:
+        text = str(exc)
+        if "storageQuotaExceeded" in text or "Service Accounts do not have storage quota" in text:
+            raise RuntimeError(
+                "Drive test upload başarısız: Service Account depolama kotasına sahip değil.\n"
+                f"Test dosyası hedef klasör ID'sine parents=[{folder_id}] ile gönderildi.\n"
+                f"Service account e-postasını hedef klasöre Editor olarak ekleyin: {result.get('client_email')}\n"
+                "Kişisel My Drive klasöründe aynı kota hatası devam ederse hedef klasörü Shared Drive içinde kullanın "
+                "veya kullanıcı OAuth girişi/domain-wide delegation kurun.\n"
+                f"Google hata detayı: {exc}"
+            ) from exc
+        raise
+    result["test_upload_link"] = upload.get("webViewLink") or f"https://drive.google.com/file/d/{upload['id']}/view"
+    result["ok"] = True
+    return result

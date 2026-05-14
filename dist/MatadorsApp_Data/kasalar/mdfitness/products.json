@@ -1,0 +1,41 @@
+[
+  {
+    "id": 3,
+    "name": "cips",
+    "category": "Su",
+    "price": 12.0,
+    "stock": 113.0,
+    "active": 1,
+    "archived": 0,
+    "is_active": 1,
+    "icon": "",
+    "created_at": "2026-05-07T11:32:26",
+    "cashier_id": 2
+  },
+  {
+    "id": 2,
+    "name": "patates",
+    "category": "yiyecek",
+    "price": 123.0,
+    "stock": 2.0,
+    "active": 1,
+    "archived": 0,
+    "is_active": 1,
+    "icon": "🧇",
+    "created_at": "2026-05-07T11:32:14",
+    "cashier_id": 2
+  },
+  {
+    "id": 1,
+    "name": "su1.5l",
+    "category": "Su",
+    "price": 25.0,
+    "stock": -17.0,
+    "active": 1,
+    "archived": 0,
+    "is_active": 1,
+    "icon": "💧",
+    "created_at": "2026-05-07T11:31:22",
+    "cashier_id": 2
+  }
+]

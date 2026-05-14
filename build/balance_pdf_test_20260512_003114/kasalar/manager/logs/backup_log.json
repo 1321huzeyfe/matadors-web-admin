@@ -1,0 +1,56 @@
+[
+  {
+    "date": "2026-05-08T02:49:34",
+    "reason": "startup",
+    "local_path": "C:\\Users\\huzeyfe\\Desktop\\MatadorsApp_V1.1\\MatadorsApp_Data\\kasalar\\manager\\backups\\sales_2026-05-08.sqlite",
+    "drive_path": "",
+    "status": "local_only",
+    "checksum": "0e3c2122f596398177bb17eef8529596001f6cd683a633f678f775f6096149ba",
+    "error": "Drive klasoru veya Drive API ayarlari secilmedi/erisilemedi."
+  },
+  {
+    "date": "2026-05-11T20:47:07",
+    "reason": "startup",
+    "local_path": "C:\\Users\\huzeyfe\\Desktop\\MatadorsApp_V1.1\\dist\\MatadorsApp_Data\\kasalar\\manager\\backups\\2026-05\\sales_2026-05-11.db",
+    "drive_path": "",
+    "status": "local_only",
+    "checksum": "7d207fe835aa374220782a1ca367f33f50af29ae5dc498fe01833ee65deb02f4",
+    "error": "Drive klasoru veya Drive API ayarlari secilmedi/erisilemedi."
+  },
+  {
+    "date": "2026-05-11T20:49:05",
+    "reason": "shutdown",
+    "local_path": "C:\\Users\\huzeyfe\\Desktop\\MatadorsApp_V1.1\\dist\\MatadorsApp_Data\\kasalar\\manager\\backups\\2026-05\\sales_2026-05-11.db",
+    "drive_path": "",
+    "status": "local_only",
+    "checksum": "09f98468ce9f25bfd544a9fe4de09144909f06b753f483450a47dc4b34f50400",
+    "error": "Drive klasoru veya Drive API ayarlari secilmedi/erisilemedi."
+  },
+  {
+    "date": "2026-05-11T23:05:30",
+    "reason": "shutdown",
+    "local_path": "C:\\Users\\huzeyfe\\Desktop\\MatadorsApp_V1.1\\dist\\MatadorsApp_Data\\kasalar\\manager\\backups\\2026-05\\sales_2026-05-11.db",
+    "drive_path": "",
+    "status": "local_only",
+    "checksum": "d5d65c60c6bddc2e6b10220954fdd3f4a87a03f24b0be62fdccf029abcb1785d",
+    "error": "Drive klasoru veya Drive API ayarlari secilmedi/erisilemedi."
+  },
+  {
+    "date": "2026-05-11T23:15:18",
+    "reason": "shutdown",
+    "local_path": "C:\\Users\\huzeyfe\\Desktop\\MatadorsApp_V1.1\\dist\\MatadorsApp_Data\\kasalar\\manager\\backups\\2026-05\\sales_2026-05-11.db",
+    "drive_path": "",
+    "status": "local_only",
+    "checksum": "dabcffc573da7a4bcc5a2cb9c16474f53f6a32d9dcd5dd714449382ec61b80ca",
+    "error": "Drive klasoru veya Drive API ayarlari secilmedi/erisilemedi."
+  },
+  {
+    "date": "2026-05-11T23:39:54",
+    "reason": "shutdown",
+    "local_path": "C:\\Users\\huzeyfe\\Desktop\\MatadorsApp_V1.1\\dist\\MatadorsApp_Data\\kasalar\\manager\\backups\\2026-05\\sales_2026-05-12.db",
+    "drive_path": "",
+    "status": "local_only",
+    "checksum": "b95d400c5fd183ac51c76c9a7f01d27733b589338b8894841968147e55f0ee0b",
+    "error": "Drive klasoru veya Drive API ayarlari secilmedi/erisilemedi."
+  }
+]

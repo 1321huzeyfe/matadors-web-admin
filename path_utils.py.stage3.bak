@@ -1,0 +1,206 @@
+# -*- coding: utf-8 -*-
+"""
+Safe path management for PyInstaller bundled applications.
+
+Bundled resources and writable application data are intentionally separate:
+resources are read from PyInstaller's temporary bundle when frozen, while
+database, reports, backups and exports live in a single writable data folder.
+"""
+import sys
+import os
+import re
+from datetime import datetime, time, timedelta
+from pathlib import Path
+
+
+DB_FILE_NAME = "manager.db"
+AUTH_DB_FILE_NAME = "matadors_kasa_auth.db"
+BUSINESS_DAY_CUTOFF = time(23, 30)
+
+
+def get_app_root():
+    """Return the directory that owns the running app/exe."""
+    if getattr(sys, "frozen", False):
+        exe_dir = Path(sys.executable).resolve().parent
+        if exe_dir.name.lower() == "dist":
+            parent = exe_dir.parent
+            if (parent / "MatadorsApp_Data").exists() or (parent / "matadors_kasa.spec").exists():
+                return str(parent)
+        return str(exe_dir)
+    return os.path.dirname(os.path.abspath(__file__))
+
+def resource_path(relative_path):
+    """
+    Get absolute path to resource, works for dev and for PyInstaller
+    
+    Args:
+        relative_path (str): Relative path to the resource
+        
+    Returns:
+        str: Absolute path to the resource
+    """
+    try:
+        # PyInstaller creates a temp folder and stores path in _MEIPASS
+        base_path = sys._MEIPASS
+    except Exception:
+        base_path = get_app_root()
+    
+    return os.path.join(base_path, relative_path)
+
+def get_customtkinter_assets_path():
+    """
+    Get the path to customtkinter assets directory
+    
+    Returns:
+        str: Path to customtkinter assets directory
+    """
+    return resource_path("customtkinter/assets")
+
+def get_app_assets_path():
+    """
+    Get the path to application assets directory
+    
+    Returns:
+        str: Path to application assets directory
+    """
+    return resource_path("assets")
+
+def ensure_path_exists(path):
+    """
+    Ensure a directory exists, create if it doesn't
+    
+    Args:
+        path (str): Directory path to ensure exists
+    """
+    os.makedirs(path, exist_ok=True)
+    return path
+
+
+def get_data_dir():
+    """Return the writable data root requested by the app layout."""
+    return ensure_path_exists(os.path.join(get_app_root(), "MatadorsApp_Data"))
+
+
+def sanitize_kasa_name(kasa_adi: str) -> str:
+    """Normalize a kasa/profile name for folder paths."""
+    value = (kasa_adi or "").strip().lower()
+    value = re.sub(r"[^a-z0-9_-]+", "_", value)
+    return value or "kasa"
+
+
+def _data_root(data_root=None) -> Path:
+    return Path(data_root) if data_root is not None else Path(get_data_dir())
+
+
+def get_local_dir():
+    """Compatibility alias for older code; manager DB now lives in kasalar/manager/db."""
+    return str(get_kasa_db_dir("manager"))
+
+
+def get_drive_sync_dir():
+    """Return the default local Google Drive sync mirror directory."""
+    return ensure_path_exists(os.path.join(get_data_dir(), "drive_sync"))
+
+
+def get_kasalar_dir():
+    """Return the per-cashier JSON data directory."""
+    return ensure_path_exists(os.path.join(get_data_dir(), "kasalar"))
+
+
+def get_kasa_dir(kasa_adi: str, data_root=None) -> Path:
+    return Path(ensure_path_exists(_data_root(data_root) / "kasalar" / sanitize_kasa_name(kasa_adi)))
+
+
+def get_kasa_db_dir(kasa_adi: str, data_root=None) -> Path:
+    return Path(ensure_path_exists(get_kasa_dir(kasa_adi, data_root) / "db"))
+
+
+def get_kasa_reports_dir(kasa_adi: str, data_root=None) -> Path:
+    return Path(ensure_path_exists(get_kasa_dir(kasa_adi, data_root) / "reports"))
+
+
+def get_kasa_backups_dir(kasa_adi: str, data_root=None) -> Path:
+    return Path(ensure_path_exists(get_kasa_dir(kasa_adi, data_root) / "backups"))
+
+
+def get_kasa_logs_dir(kasa_adi: str, data_root=None) -> Path:
+    return Path(ensure_path_exists(get_kasa_dir(kasa_adi, data_root) / "logs"))
+
+
+def get_kasa_db_path(kasa_adi: str, filename: str = "sales.db", data_root=None) -> Path:
+    return get_kasa_db_dir(kasa_adi, data_root) / filename
+
+
+def get_kasa_customers_json_path(kasa_adi: str, data_root=None) -> Path:
+    return get_kasa_db_dir(kasa_adi, data_root) / "customers.json"
+
+
+def get_kasa_products_json_path(kasa_adi: str, data_root=None) -> Path:
+    return get_kasa_db_dir(kasa_adi, data_root) / "products.json"
+
+
+def get_kasa_transactions_json_path(kasa_adi: str, data_root=None) -> Path:
+    return get_kasa_db_dir(kasa_adi, data_root) / "transactions.json"
+
+
+def business_day(now: datetime | None = None) -> str:
+    """Return the app business date; after 23:30 belongs to the next day."""
+    current = now or datetime.now()
+    day = current.date()
+    if current.time() >= BUSINESS_DAY_CUTOFF:
+        day += timedelta(days=1)
+    return day.isoformat()
+
+
+def business_month(day: str | None = None) -> str:
+    return (day or business_day())[:7]
+
+
+def get_kasa_daily_backup_path(kasa_adi: str, day: str | None = None, data_root=None) -> Path:
+    return get_kasa_backups_dir(kasa_adi, data_root) / f"sales_{day or business_day()}.sqlite"
+
+
+def get_kasa_report_month_dir(kasa_adi: str, day: str | None = None, data_root=None) -> Path:
+    return Path(ensure_path_exists(get_kasa_reports_dir(kasa_adi, data_root) / business_month(day)))
+
+
+def get_reports_dir():
+    """Compatibility alias; manager reports live under kasalar/manager/reports."""
+    return str(get_kasa_reports_dir("manager"))
+
+
+def get_backups_dir():
+    """Compatibility alias; manager backups live under kasalar/manager/backups."""
+    return str(get_kasa_backups_dir("manager"))
+
+
+def get_logs_dir():
+    """Return the single logs directory."""
+    return ensure_path_exists(os.path.join(get_data_dir(), "logs"))
+
+
+def get_exports_dir():
+    """Compatibility alias; exports are kept under manager reports."""
+    return get_reports_dir()
+
+
+def ensure_standard_data_dirs():
+    """Create the one supported writable layout."""
+    for path in (
+        get_drive_sync_dir(),
+        get_kasalar_dir(),
+        get_logs_dir(),
+        get_kasa_db_dir("manager"),
+        get_kasa_reports_dir("manager"),
+        get_kasa_backups_dir("manager"),
+        get_kasa_logs_dir("manager"),
+    ):
+        ensure_path_exists(path)
+
+
+def get_db_path():
+    return str(get_kasa_db_path("manager", DB_FILE_NAME))
+
+
+def get_auth_db_path():
+    return str(get_kasa_db_path("manager", AUTH_DB_FILE_NAME))

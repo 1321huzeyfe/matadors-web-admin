@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>MatadorsApp Yönetici Paneli</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <main class="shell">
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">MatadorsApp</p>
+        <h1>Yönetici Paneli</h1>
+      </div>
+      <div class="toolbar">
+        <select id="branchFilter"><option value="">Tüm kasalar</option></select>
+        <button id="refreshBtn" type="button">Yenile</button>
+        <a class="logout" href="/logout">Çıkış</a>
+      </div>
+    </header>
+
+    <section id="errorBox" class="error-box" hidden></section>
+
+    <section class="metrics">
+      <article class="metric"><span>Bugünkü satış</span><strong id="todayTotal">0,00 TL</strong></article>
+      <article class="metric"><span>Satış adedi</span><strong id="saleCount">0</strong></article>
+      <article class="metric"><span>Müşteri</span><strong id="customerCount">0</strong></article>
+      <article class="metric"><span>Ürün</span><strong id="productCount">0</strong></article>
+      <article class="metric wide"><span>Son güncelleme</span><strong id="updatedAt">-</strong></article>
+    </section>
+
+    <section class="grid">
+      <article class="panel">
+        <h2>Kasa Özeti</h2>
+        <div class="table-wrap"><table><thead><tr><th>Kasa</th><th>Rol</th><th>Bugün</th><th>Satış</th><th>Müşteri</th><th>Ürün</th></tr></thead><tbody id="branchRows"></tbody></table></div>
+      </article>
+      <article class="panel">
+        <h2>Satış Listesi</h2>
+        <div class="table-wrap"><table><thead><tr><th>Tarih</th><th>Kasa</th><th>Müşteri</th><th>Tutar</th></tr></thead><tbody id="salesRows"></tbody></table></div>
+      </article>
+      <article class="panel">
+        <h2>Müşteri Bakiyeleri</h2>
+        <div class="table-wrap"><table><thead><tr><th>Müşteri</th><th>Kasa</th><th>Bakiye</th></tr></thead><tbody id="balanceRows"></tbody></table></div>
+      </article>
+      <article class="panel">
+        <h2>Ürün Stokları</h2>
+        <div class="table-wrap"><table><thead><tr><th>Ürün</th><th>Kasa</th><th>Stok</th><th>Fiyat</th></tr></thead><tbody id="stockRows"></tbody></table></div>
+      </article>
+    </section>
+  </main>
+  <script src="/app.js"></script>
+</body>
+</html>

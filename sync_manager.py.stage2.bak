@@ -1,0 +1,218 @@
+# -*- coding: utf-8 -*-
+"""Non-blocking SQLite and report sync for Google Drive folder mirroring."""
+
+from __future__ import annotations
+
+import json
+import os
+import shutil
+import sqlite3
+import threading
+from contextlib import closing
+from dataclasses import dataclass
+from datetime import datetime, timedelta
+from pathlib import Path
+from typing import Callable
+
+from profile_manager import PROFILE_KASA, PROFILE_MANAGER, Profile, ProfileManager
+from cashier_data_store import CashierDataStore
+
+
+SYNC_INTERVAL_SECONDS = 5 * 60
+STALE_AFTER_SECONDS = 5 * 60
+
+
+@dataclass
+class SyncStatus:
+    username: str
+    ok: bool
+    last_sync: str = ""
+    message: str = ""
+    delayed: bool = False
+
+
+class SyncManager:
+    def __init__(self, profile_manager: ProfileManager, db_factory: Callable[[str], object] | None = None, shared_data_manager=None):
+        self.profile_manager = profile_manager
+        self.db_factory = db_factory
+        self.shared_data_manager = shared_data_manager
+        self.cashier_data_store = CashierDataStore()
+        self._lock = threading.Lock()
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+        self._active_profile: Profile | None = None
+        self._last_error = ""
+
+    def start_for_profile(self, profile: Profile, interval_seconds: int = SYNC_INTERVAL_SECONDS) -> None:
+        self.stop()
+        self._active_profile = profile
+        if profile.profile_type != PROFILE_KASA:
+            return
+        self._stop.clear()
+        self._thread = threading.Thread(target=self._loop, args=(profile, interval_seconds), daemon=True)
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._stop.set()
+        if self._thread and self._thread.is_alive():
+            self._thread.join(timeout=1.5)
+        self._thread = None
+
+    def sync_now_async(self, callback: Callable[[SyncStatus], None] | None = None) -> None:
+        profile = self._active_profile
+        if not profile:
+            return
+
+        def runner():
+            result = self.sync_profile(profile)
+            if callback:
+                callback(result)
+
+        threading.Thread(target=runner, daemon=True).start()
+
+    def sync_profile(self, profile: Profile) -> SyncStatus:
+        if profile.profile_type != PROFILE_KASA:
+            return SyncStatus(profile.username, True, message="Yönetici profili sadece okur.")
+        with self._lock:
+            try:
+                profile.drive_dir.mkdir(parents=True, exist_ok=True)
+                profile.reports_dir.mkdir(parents=True, exist_ok=True)
+                month_dir = profile.backups_dir / datetime.now().strftime("%Y-%m")
+                month_dir.mkdir(parents=True, exist_ok=True)
+                if profile.local_db_path.exists():
+                    if self.shared_data_manager:
+                        self.shared_data_manager.sync_products_to_local(str(profile.local_db_path))
+                        self._append_pending_customers(profile)
+                        self.shared_data_manager.merge_pending_customers(actor="sync_manager")
+                    self._sqlite_backup(profile.local_db_path, profile.drive_db_path)
+                    backup_name = f"sales_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.db"
+                    self._sqlite_backup(profile.local_db_path, month_dir / backup_name)
+                    kasa_month_dir = profile.kasa_backups_dir / datetime.now().strftime("%Y-%m")
+                    self._sqlite_backup(profile.local_db_path, kasa_month_dir / backup_name)
+                    self.cashier_data_store.export_profile(profile)
+                    self._write_standard_reports(profile)
+                self._write_metadata(profile, True, "")
+                return SyncStatus(profile.username, True, datetime.now().isoformat(timespec="seconds"), "Senkron tamamlandı.")
+            except Exception as exc:
+                self._last_error = str(exc)
+                self._write_metadata(profile, False, str(exc))
+                return SyncStatus(profile.username, False, message=f"Senkron yapılamadı: {exc}", delayed=True)
+
+    def copy_report_to_drive(self, report_path: str | Path, profile: Profile | None = None, report_type: str = "reports") -> str:
+        profile = profile or self._active_profile
+        if not profile or not Path(report_path).exists():
+            return ""
+        if profile.profile_type == PROFILE_MANAGER:
+            dest_root = profile.drive_dir / "combined_reports"
+        else:
+            dest_root = profile.reports_dir
+        month_dir = dest_root / datetime.now().strftime("%Y-%m") / report_type
+        month_dir.mkdir(parents=True, exist_ok=True)
+        source = Path(report_path)
+        dest = month_dir / source.name
+        shutil.copy2(source, dest)
+        if profile.profile_type == PROFILE_KASA:
+            local_report_type = {
+                "gunluk": "gun_sonu_pdf",
+                "musteri": "musteri_guncel_pdf",
+                "stok_defter": "musteri_guncel_pdf",
+            }.get(report_type, report_type)
+            local_dir = profile.kasa_reports_dir / local_report_type
+            local_dir.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source, local_dir / source.name)
+        return str(dest)
+
+    def manager_statuses(self, cashiers: list[dict]) -> list[SyncStatus]:
+        statuses: list[SyncStatus] = []
+        now = datetime.now()
+        for user in cashiers:
+            profile = self.profile_manager.ensure_cashier_profile(user["username"])
+            meta = self._read_metadata(profile)
+            last_sync = meta.get("last_sync", "")
+            delayed = True
+            if last_sync:
+                try:
+                    delayed = now - datetime.fromisoformat(last_sync) > timedelta(seconds=STALE_AFTER_SECONDS)
+                except ValueError:
+                    delayed = True
+            elif profile.drive_db_path.exists():
+                last_sync = datetime.fromtimestamp(profile.drive_db_path.stat().st_mtime).isoformat(timespec="seconds")
+                delayed = now - datetime.fromtimestamp(profile.drive_db_path.stat().st_mtime) > timedelta(seconds=STALE_AFTER_SECONDS)
+            statuses.append(
+                SyncStatus(
+                    username=user["username"],
+                    ok=bool(meta.get("ok", profile.drive_db_path.exists())),
+                    last_sync=last_sync,
+                    message=meta.get("error", ""),
+                    delayed=delayed,
+                )
+            )
+        return statuses
+
+    def _loop(self, profile: Profile, interval_seconds: int) -> None:
+        self.sync_profile(profile)
+        while not self._stop.wait(interval_seconds):
+            self.sync_profile(profile)
+
+    def _append_pending_customers(self, profile: Profile) -> None:
+        if not self.shared_data_manager:
+            return
+        with closing(sqlite3.connect(str(profile.local_db_path))) as conn, conn:
+            conn.row_factory = sqlite3.Row
+            cols = {row["name"] for row in conn.execute("PRAGMA table_info(customers)").fetchall()}
+            if "customer_uuid" not in cols:
+                return
+            if "pending_sync" not in cols:
+                conn.execute("ALTER TABLE customers ADD COLUMN pending_sync INTEGER DEFAULT 1")
+            rows = conn.execute(
+                """
+                SELECT * FROM customers
+                WHERE COALESCE(pending_sync, 1) = 1
+                ORDER BY id
+                """
+            ).fetchall()
+            for row in rows:
+                payload = dict(row)
+                if not payload.get("customer_uuid"):
+                    payload["customer_uuid"] = f"{profile.username}-{payload['id']}"
+                    conn.execute("UPDATE customers SET customer_uuid = ? WHERE id = ?", (payload["customer_uuid"], payload["id"]))
+                self.shared_data_manager.append_pending_customer(profile.username, payload)
+                conn.execute("UPDATE customers SET pending_sync = 0 WHERE id = ?", (row["id"],))
+
+    def _sqlite_backup(self, source: Path, target: Path) -> None:
+        if not source.exists():
+            return
+        target.parent.mkdir(parents=True, exist_ok=True)
+        tmp = target.with_suffix(target.suffix + ".tmp")
+        with closing(sqlite3.connect(str(source))) as src, closing(sqlite3.connect(str(tmp))) as dst:
+            src.backup(dst)
+            result = dst.execute("PRAGMA integrity_check").fetchone()
+        if not result or result[0] != "ok":
+            tmp.unlink(missing_ok=True)
+            raise RuntimeError("SQLite bütünlük kontrolü başarısız.")
+        os.replace(tmp, target)
+
+    def _write_standard_reports(self, profile: Profile) -> None:
+        """Standard sync does not create report files; report actions create PDF files."""
+        return None
+
+    def _metadata_path(self, profile: Profile) -> Path:
+        return profile.drive_dir / "sync_status.json"
+
+    def _write_metadata(self, profile: Profile, ok: bool, error: str) -> None:
+        payload = {
+            "username": profile.username,
+            "ok": ok,
+            "last_sync": datetime.now().isoformat(timespec="seconds"),
+            "error": error,
+        }
+        self._metadata_path(profile).write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    def _read_metadata(self, profile: Profile) -> dict:
+        path = self._metadata_path(profile)
+        if not path.exists():
+            return {}
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return {}

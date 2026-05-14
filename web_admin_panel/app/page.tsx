@@ -49,6 +49,34 @@ function branchLabel(value: string) {
   return spaced.charAt(0).toLocaleUpperCase("tr-TR") + spaced.slice(1);
 }
 
+function isAdminLikeBranch(value: string) {
+  const clean = String(value || "").trim().toLocaleLowerCase("tr-TR");
+  return !clean || clean.includes("admin") || clean.includes("genel") || clean.includes("manager") || clean.includes("yonetici") || clean.includes("yönetici");
+}
+
+function isRealBranch(value: string) {
+  return !isAdminLikeBranch(value);
+}
+
+function firstNumber(row: Row, keys: string[]) {
+  for (const key of keys) {
+    const value = row[key];
+    if (value !== undefined && value !== null && String(value).trim() !== "") {
+      const number = Number(String(value).replace(",", "."));
+      return Number.isFinite(number) ? number : 0;
+    }
+  }
+  return 0;
+}
+
+function saleDateRaw(row: Row) {
+  return first(row, ["created_at", "sale_date", "date", "createdAt", "timestamp", "sold_at", "datetime", "tarih"], "");
+}
+
+function todayKey() {
+  return new Date().toISOString().slice(0, 10);
+}
+
 function rowBranch(row: Row, selectedBranch = "") {
   return branchLabel(
     branchOf(row)
@@ -150,9 +178,28 @@ export default async function Page({ searchParams }: { searchParams?: { branch?:
 
   const selectedBranch = searchParams?.branch || "";
   const data = await loadPanelData(selectedBranch);
-  const activeBranchLabel = data.selectedBranch ? branchLabel(data.selectedBranch) : "Tüm Kasalar";
-  const visibleBalances = data.balances.slice(0, 10);
-  const visibleStock = data.stock.slice(0, 10);
+  const pageBranches = data.branches.filter(isRealBranch);
+  const pageActiveBranch = data.selectedBranch && pageBranches.includes(data.selectedBranch) ? data.selectedBranch : "";
+  const filteredBalances = data.balances.filter((item) => isRealBranch(item.branch) && (!pageActiveBranch || item.branch === pageActiveBranch));
+  const filteredStock = data.stock.filter((item) => isRealBranch(item.branch) && (!pageActiveBranch || item.branch === pageActiveBranch));
+  const filteredSales = data.sales.filter((item) => {
+    const branch = rowBranch(item, pageActiveBranch);
+    return isRealBranch(branch) && (!pageActiveBranch || branch === pageActiveBranch || branchLabel(branch) === branchLabel(pageActiveBranch));
+  });
+  const pageTodaySales = filteredSales.filter((sale) => saleDateRaw(sale).slice(0, 10) === todayKey());
+  const pageSummary = {
+    ...data.summary,
+    customerCount: filteredBalances.length,
+    productCount: filteredStock.length,
+    totalBalance: filteredBalances.reduce((total, customer) => total + customer.balance, 0),
+    totalStock: filteredStock.reduce((total, product) => total + product.stock, 0),
+    saleCount: filteredSales.length,
+    todayTotal: pageTodaySales.reduce((total, sale) => total + firstNumber(sale, ["total", "total_amount", "grand_total", "amount", "net_total", "tutar", "toplam"]), 0)
+  };
+  const pageActiveBranchLabel = pageActiveBranch ? branchLabel(pageActiveBranch) : "Tüm Kasalar";
+  const activeBranchLabel = pageActiveBranchLabel;
+  const visibleBalances = filteredBalances.slice(0, 10);
+  const visibleStock = filteredStock.slice(0, 10);
 
   return (
     <div className="admin-layout">
@@ -161,13 +208,14 @@ export default async function Page({ searchParams }: { searchParams?: { branch?:
       <main className="content-shell">
         <header className="overview-card">
           <div className="overview-title">
+            <span className="version-pill">v2</span>
             <h1>Özet</h1>
             <span>Sistem durumu ve genel bakış</span>
-            <small>{activeBranchLabel} için son güncelleme: {dateText(data.summary.updatedAt)}</small>
+            <small>{activeBranchLabel} için son güncelleme: {dateText(pageSummary.updatedAt)}</small>
           </div>
           <div className="topbar-actions">
-            <BranchFilter branches={data.branches} selected={data.selectedBranch} />
-            <a className="button button-secondary" href={data.selectedBranch ? `/?branch=${encodeURIComponent(data.selectedBranch)}` : "/"}>
+            <BranchFilter branches={pageBranches} selected={pageActiveBranch} />
+            <a className="button button-secondary" href={pageActiveBranch ? `/?branch=${encodeURIComponent(pageActiveBranch)}` : "/"}>
               <Icon name="refresh" />
               Yenile
             </a>
@@ -182,16 +230,16 @@ export default async function Page({ searchParams }: { searchParams?: { branch?:
         )}
 
         <section className="metrics" aria-label="Özet kartları">
-          <StatCard tone="blue" icon="users" label="Toplam Müşteri" value={numberText(data.summary.customerCount)} hint="Aktif müşteriler" />
-          <StatCard tone="green" icon="cash" label="Toplam Bakiye" value={money(data.summary.totalBalance)} hint="Tüm müşterilerin bakiyesi" />
-          <StatCard tone="purple" icon="box" label="Toplam Ürün" value={numberText(data.summary.productCount)} hint="Stoktaki ürün sayısı" />
-          <StatCard tone="orange" icon="moves" label="Toplam Stok" value={numberText(data.summary.totalStock)} hint="Tüm ürün stokları" />
+          <StatCard tone="blue" icon="users" label="Toplam Müşteri" value={numberText(pageSummary.customerCount)} hint="Aktif müşteriler" />
+          <StatCard tone="green" icon="cash" label="Toplam Bakiye" value={money(pageSummary.totalBalance)} hint="Tüm müşterilerin bakiyesi" />
+          <StatCard tone="purple" icon="box" label="Toplam Ürün" value={numberText(pageSummary.productCount)} hint="Stoktaki ürün sayısı" />
+          <StatCard tone="orange" icon="moves" label="Toplam Stok" value={numberText(pageSummary.totalStock)} hint="Tüm ürün stokları" />
         </section>
 
         <section className="panel-grid primary-panels">
           <article id="customers" className="panel data-panel">
             <div className="panel-action-strip">
-              <a className="button button-primary" href={`/api/customers/pdf${data.selectedBranch ? `?branch=${encodeURIComponent(data.selectedBranch)}` : ""}`}>
+              <a className="button button-primary" href={`/api/customers/pdf${pageActiveBranch ? `?branch=${encodeURIComponent(pageActiveBranch)}` : ""}`}>
                 <Icon name="download" />
                 PDF İndir
               </a>
@@ -219,8 +267,8 @@ export default async function Page({ searchParams }: { searchParams?: { branch?:
               </table>
             </div>
             <footer className="panel-footer">
-              <span>Toplam {numberText(data.balances.length)} müşteri</span>
-              <Pager total={data.balances.length} pageSize={10} />
+              <span>Toplam {numberText(filteredBalances.length)} müşteri</span>
+              <Pager total={filteredBalances.length} pageSize={10} />
             </footer>
           </article>
 
@@ -249,28 +297,28 @@ export default async function Page({ searchParams }: { searchParams?: { branch?:
               </table>
             </div>
             <footer className="panel-footer">
-              <span>Toplam {numberText(data.stock.length)} ürün</span>
-              <Pager total={data.stock.length} pageSize={10} />
+              <span>Toplam {numberText(filteredStock.length)} ürün</span>
+              <Pager total={filteredStock.length} pageSize={10} />
             </footer>
           </article>
         </section>
 
         <section className="panel-grid stock-action-section">
-          <ProductTools branch={data.selectedBranch} products={data.stock} />
+          <ProductTools branch={pageActiveBranch} products={filteredStock} />
         </section>
 
         <section id="branches" className="mini-grid">
           <article className="mini-card">
             <strong>Bugünkü satış</strong>
-            <span>{money(data.summary.todayTotal)}</span>
+            <span>{money(pageSummary.todayTotal)}</span>
           </article>
           <article id="moves" className="mini-card">
             <strong>Satış adedi</strong>
-            <span>{numberText(data.summary.saleCount)}</span>
+            <span>{numberText(pageSummary.saleCount)}</span>
           </article>
           <article className="mini-card">
             <strong>Kasa özeti</strong>
-            <span>{numberText(data.byBranch.length)} kasa</span>
+            <span>{numberText(pageBranches.length)} kasa</span>
           </article>
         </section>
 

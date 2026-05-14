@@ -1,0 +1,209 @@
+[
+  {
+    "date": "2026-05-07T10:57:49",
+    "reason": "startup",
+    "local_path": "c:\\Users\\huzeyfe\\Desktop\\MatadorsApp_V1.1\\MatadorsApp_Data\\backups\\local\\2026-05\\matadors_backup_2026-05-07_10-57-49.db",
+    "drive_path": "",
+    "status": "local_only",
+    "checksum": "0e3c2122f596398177bb17eef8529596001f6cd683a633f678f775f6096149ba",
+    "error": "Drive klasoru veya Drive API ayarlari secilmedi/erisilemedi."
+  },
+  {
+    "date": "2026-05-07T11:08:54",
+    "reason": "shutdown",
+    "local_path": "c:\\Users\\huzeyfe\\Desktop\\MatadorsApp_V1.1\\MatadorsApp_Data\\backups\\local\\2026-05\\matadors_backup_2026-05-07_11-08-54.db",
+    "drive_path": "",
+    "status": "local_only",
+    "checksum": "c982a03414398f93f805d1b38ca68cceb67abd0654b1061d4f6fc12ed1cc1e9c",
+    "error": "Drive klasoru veya Drive API ayarlari secilmedi/erisilemedi."
+  },
+  {
+    "date": "2026-05-07T11:24:30",
+    "reason": "shutdown",
+    "local_path": "c:\\Users\\huzeyfe\\Desktop\\MatadorsApp_V1.1\\MatadorsApp_Data\\backups\\local\\2026-05\\matadors_backup_2026-05-07_11-24-30.db",
+    "drive_path": "",
+    "status": "local_only",
+    "checksum": "e7dbd6a1212f44952a0b83466493c9c084d86e0fc9031ea33b7d061ea025711e",
+    "error": "Drive klasoru veya Drive API ayarlari secilmedi/erisilemedi."
+  },
+  {
+    "date": "2026-05-07T11:40:14",
+    "reason": "shutdown",
+    "local_path": "c:\\Users\\huzeyfe\\Desktop\\MatadorsApp_V1.1\\MatadorsApp_Data\\backups\\local\\2026-05\\matadors_backup_2026-05-07_11-40-14.db",
+    "drive_path": "",
+    "status": "local_only",
+    "checksum": "fc271ffc4c05e07ce294e25f8c13385a2464643bc30bcf12171fc9e1a6780e77",
+    "error": "Drive klasoru veya Drive API ayarlari secilmedi/erisilemedi."
+  },
+  {
+    "date": "2026-05-07T11:41:19",
+    "reason": "sale_completed",
+    "local_path": "c:\\Users\\huzeyfe\\Desktop\\MatadorsApp_V1.1\\MatadorsApp_Data\\backups\\local\\2026-05\\matadors_backup_2026-05-07_11-41-19.db",
+    "drive_path": "",
+    "status": "local_only",
+    "checksum": "21938169a7a11e30cdc891703352a26962652175efb5970c8996f0d771b26292",
+    "error": "Drive klasoru veya Drive API ayarlari secilmedi/erisilemedi."
+  },
+  {
+    "date": "2026-05-07T11:41:23",
+    "reason": "sale_completed",
+    "local_path": "c:\\Users\\huzeyfe\\Desktop\\MatadorsApp_V1.1\\MatadorsApp_Data\\backups\\local\\2026-05\\matadors_backup_2026-05-07_11-41-23.db",
+    "drive_path": "",
+    "status": "local_only",
+    "checksum": "ee4fd8d208dd582c81d3679f3c9142d969a83352a5fdfd36ff634495c4e34585",
+    "error": "Drive klasoru veya Drive API ayarlari secilmedi/erisilemedi."
+  },
+  {
+    "date": "2026-05-07T11:41:27",
+    "reason": "sale_completed",
+    "local_path": "c:\\Users\\huzeyfe\\Desktop\\MatadorsApp_V1.1\\MatadorsApp_Data\\backups\\local\\2026-05\\matadors_backup_2026-05-07_11-41-27.db",
+    "drive_path": "",
+    "status": "local_only",
+    "checksum": "cddd0410651d6dafe611023832d52b97ded61002d6caa3ba108a27577cd015db",
+    "error": "Drive klasoru veya Drive API ayarlari secilmedi/erisilemedi."
+  },
+  {
+    "date": "2026-05-07T11:41:30",
+    "reason": "sale_completed",
+    "local_path": "c:\\Users\\huzeyfe\\Desktop\\MatadorsApp_V1.1\\MatadorsApp_Data\\backups\\local\\2026-05\\matadors_backup_2026-05-07_11-41-30.db",
+    "drive_path": "",
+    "status": "local_only",
+    "checksum": "d59df0976368de1fbd669ab923bffcf162c1de17a105b340a0d842a8a9afade4",
+    "error": "Drive klasoru veya Drive API ayarlari secilmedi/erisilemedi."
+  },
+  {
+    "date": "2026-05-07T11:41:33",
+    "reason": "sale_completed",
+    "local_path": "c:\\Users\\huzeyfe\\Desktop\\MatadorsApp_V1.1\\MatadorsApp_Data\\backups\\local\\2026-05\\matadors_backup_2026-05-07_11-41-33.db",
+    "drive_path": "",
+    "status": "local_only",
+    "checksum": "2525f02e7e1fad9ab9a1ad053ca35f92598422a7cc4a6602d7f549533c355ee1",
+    "error": "Drive klasoru veya Drive API ayarlari secilmedi/erisilemedi."
+  },
+  {
+    "date": "2026-05-07T11:41:35",
+    "reason": "sale_completed",
+    "local_path": "c:\\Users\\huzeyfe\\Desktop\\MatadorsApp_V1.1\\MatadorsApp_Data\\backups\\local\\2026-05\\matadors_backup_2026-05-07_11-41-35.db",
+    "drive_path": "",
+    "status": "local_only",
+    "checksum": "b7c51f2ef9d2e2e018d7877bc9ef4a2e0a091cdcab748841f94d70461a156020",
+    "error": "Drive klasoru veya Drive API ayarlari secilmedi/erisilemedi."
+  },
+  {
+    "date": "2026-05-07T11:41:40",
+    "reason": "sale_completed",
+    "local_path": "c:\\Users\\huzeyfe\\Desktop\\MatadorsApp_V1.1\\MatadorsApp_Data\\backups\\local\\2026-05\\matadors_backup_2026-05-07_11-41-40.db",
+    "drive_path": "",
+    "status": "local_only",
+    "checksum": "c4af681dc892b631b0187495fdbe91066675997e56db3442c7900723cbede21e",
+    "error": "Drive klasoru veya Drive API ayarlari secilmedi/erisilemedi."
+  },
+  {
+    "date": "2026-05-07T11:41:42",
+    "reason": "sale_completed",
+    "local_path": "c:\\Users\\huzeyfe\\Desktop\\MatadorsApp_V1.1\\MatadorsApp_Data\\backups\\local\\2026-05\\matadors_backup_2026-05-07_11-41-42.db",
+    "drive_path": "",
+    "status": "local_only",
+    "checksum": "1408e77f0414dd8bbd32c201b1368cfcbef0a83d4ff5d7780cb475b0ccba385a",
+    "error": "Drive klasoru veya Drive API ayarlari secilmedi/erisilemedi."
+  },
+  {
+    "date": "2026-05-07T11:41:45",
+    "reason": "sale_completed",
+    "local_path": "c:\\Users\\huzeyfe\\Desktop\\MatadorsApp_V1.1\\MatadorsApp_Data\\backups\\local\\2026-05\\matadors_backup_2026-05-07_11-41-45.db",
+    "drive_path": "",
+    "status": "local_only",
+    "checksum": "169ba939110ddd09a75b16f3288e9b73a627a174c9b708b0d94f5533c95e11dc",
+    "error": "Drive klasoru veya Drive API ayarlari secilmedi/erisilemedi."
+  },
+  {
+    "date": "2026-05-07T11:41:47",
+    "reason": "sale_completed",
+    "local_path": "c:\\Users\\huzeyfe\\Desktop\\MatadorsApp_V1.1\\MatadorsApp_Data\\backups\\local\\2026-05\\matadors_backup_2026-05-07_11-41-47.db",
+    "drive_path": "",
+    "status": "local_only",
+    "checksum": "ffce2b480ec4b433de15835824ec4a22eae0647bc861a922af12ef7b07fca958",
+    "error": "Drive klasoru veya Drive API ayarlari secilmedi/erisilemedi."
+  },
+  {
+    "date": "2026-05-07T11:41:49",
+    "reason": "sale_completed",
+    "local_path": "c:\\Users\\huzeyfe\\Desktop\\MatadorsApp_V1.1\\MatadorsApp_Data\\backups\\local\\2026-05\\matadors_backup_2026-05-07_11-41-49.db",
+    "drive_path": "",
+    "status": "local_only",
+    "checksum": "cfa0e90cfbe57a211cbe9fc36510d72a5f4cebe833e3a98dee52c81c77dd84fd",
+    "error": "Drive klasoru veya Drive API ayarlari secilmedi/erisilemedi."
+  },
+  {
+    "date": "2026-05-07T11:41:51",
+    "reason": "sale_completed",
+    "local_path": "c:\\Users\\huzeyfe\\Desktop\\MatadorsApp_V1.1\\MatadorsApp_Data\\backups\\local\\2026-05\\matadors_backup_2026-05-07_11-41-51.db",
+    "drive_path": "",
+    "status": "local_only",
+    "checksum": "fb294dd24de319cbe39cdbf08ab707c7dc9891a5728699db23c6ab424fb84da7",
+    "error": "Drive klasoru veya Drive API ayarlari secilmedi/erisilemedi."
+  },
+  {
+    "date": "2026-05-07T11:41:56",
+    "reason": "sale_completed",
+    "local_path": "c:\\Users\\huzeyfe\\Desktop\\MatadorsApp_V1.1\\MatadorsApp_Data\\backups\\local\\2026-05\\matadors_backup_2026-05-07_11-41-56.db",
+    "drive_path": "",
+    "status": "local_only",
+    "checksum": "5ec78f512ee1ab69cb7e85f10cccc71d76fc86ce155db8b6b58d31eb3d56b610",
+    "error": "Drive klasoru veya Drive API ayarlari secilmedi/erisilemedi."
+  },
+  {
+    "date": "2026-05-07T11:42:03",
+    "reason": "sale_completed",
+    "local_path": "c:\\Users\\huzeyfe\\Desktop\\MatadorsApp_V1.1\\MatadorsApp_Data\\backups\\local\\2026-05\\matadors_backup_2026-05-07_11-42-03.db",
+    "drive_path": "",
+    "status": "local_only",
+    "checksum": "ecc0b096aa57ce455968f1206e81a385acbb05bd1c98a8756466c3babd41035a",
+    "error": "Drive klasoru veya Drive API ayarlari secilmedi/erisilemedi."
+  },
+  {
+    "date": "2026-05-07T11:42:08",
+    "reason": "sale_completed",
+    "local_path": "c:\\Users\\huzeyfe\\Desktop\\MatadorsApp_V1.1\\MatadorsApp_Data\\backups\\local\\2026-05\\matadors_backup_2026-05-07_11-42-08.db",
+    "drive_path": "",
+    "status": "local_only",
+    "checksum": "bd3e55c551151823715e0585b2d69665113825a4b1984151e835fc6ec5aa14d5",
+    "error": "Drive klasoru veya Drive API ayarlari secilmedi/erisilemedi."
+  },
+  {
+    "date": "2026-05-07T11:42:16",
+    "reason": "sale_completed",
+    "local_path": "c:\\Users\\huzeyfe\\Desktop\\MatadorsApp_V1.1\\MatadorsApp_Data\\backups\\local\\2026-05\\matadors_backup_2026-05-07_11-42-16.db",
+    "drive_path": "",
+    "status": "local_only",
+    "checksum": "c3ba9e2e591db0d76935392037c9162a5552dbc4c3025a5e6f594bbe58d5f238",
+    "error": "Drive klasoru veya Drive API ayarlari secilmedi/erisilemedi."
+  },
+  {
+    "date": "2026-05-07T11:42:22",
+    "reason": "sale_completed",
+    "local_path": "c:\\Users\\huzeyfe\\Desktop\\MatadorsApp_V1.1\\MatadorsApp_Data\\backups\\local\\2026-05\\matadors_backup_2026-05-07_11-42-22.db",
+    "drive_path": "",
+    "status": "local_only",
+    "checksum": "af2b8525a0dca93f71ce15a8e0f724a2461e82860c098689dc443859d2a4e830",
+    "error": "Drive klasoru veya Drive API ayarlari secilmedi/erisilemedi."
+  },
+  {
+    "date": "2026-05-07T11:48:15",
+    "reason": "shutdown",
+    "local_path": "c:\\Users\\huzeyfe\\Desktop\\MatadorsApp_V1.1\\MatadorsApp_Data\\backups\\local\\2026-05\\matadors_backup_2026-05-07_11-48-15.db",
+    "drive_path": "",
+    "status": "local_only",
+    "checksum": "73d76a8a24adb69a4cba62b041638fdffbee04b7eed649045514de205a61c441",
+    "error": "Drive klasoru veya Drive API ayarlari secilmedi/erisilemedi."
+  },
+  {
+    "date": "2026-05-08T01:55:58",
+    "reason": "shutdown",
+    "local_path": "c:\\Users\\huzeyfe\\Desktop\\MatadorsApp_V1.1\\MatadorsApp_Data\\backups\\local\\2026-05\\matadors_backup_2026-05-08_01-55-58.db",
+    "drive_path": "",
+    "status": "local_only",
+    "checksum": "75a9a5e4376b636e99e9a8f84a0cfd187ef27288979f8f54487fa9d3064d41fd",
+    "error": "Drive klasoru veya Drive API ayarlari secilmedi/erisilemedi."
+  }
+]

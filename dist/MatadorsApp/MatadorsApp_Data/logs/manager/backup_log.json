@@ -1,0 +1,47 @@
+[
+  {
+    "date": "2026-05-12T05:26:16",
+    "reason": "startup",
+    "local_path": "C:\\Users\\huzeyfe\\Desktop\\MatadorsApp_V1.1\\dist\\MatadorsApp\\MatadorsApp_Data\\backups\\manager\\2026-05\\sales_2026-05-12.db",
+    "drive_path": "",
+    "status": "local_only",
+    "checksum": "ce2ff6e4ce76cdcc06fcf39f1768b698519a4d17d432d9ec1251a48f98b3aa79",
+    "error": ""
+  },
+  {
+    "date": "2026-05-12T05:26:24",
+    "reason": "shutdown",
+    "local_path": "C:\\Users\\huzeyfe\\Desktop\\MatadorsApp_V1.1\\dist\\MatadorsApp\\MatadorsApp_Data\\backups\\manager\\2026-05\\sales_2026-05-12.db",
+    "drive_path": "",
+    "status": "local_only",
+    "checksum": "ffed746dfed13ecac5ae8acd5adb675041c8b8aca2601efacfed3c3f8389f234",
+    "error": ""
+  },
+  {
+    "date": "2026-05-12T13:02:24",
+    "reason": "startup",
+    "local_path": "C:\\Users\\huzeyfe\\Desktop\\MatadorsApp_V1.1\\dist\\MatadorsApp\\MatadorsApp_Data\\backups\\manager\\2026-05\\sales_2026-05-12.db",
+    "drive_path": "",
+    "status": "local_only",
+    "checksum": "65462bfff4d020a8bdbd08aab76c55d1bcaf6a2adafaabcebcfc09f61caedadd",
+    "error": ""
+  },
+  {
+    "date": "2026-05-12T13:22:16",
+    "reason": "shutdown",
+    "local_path": "C:\\Users\\huzeyfe\\Desktop\\MatadorsApp_V1.1\\dist\\MatadorsApp\\MatadorsApp_Data\\backups\\manager\\2026-05\\sales_2026-05-12.db",
+    "drive_path": "",
+    "status": "local_only",
+    "checksum": "b004206cb2e9367c3b7bdaa4be3d3f4b9f7ffb7b4c667078d439c88bde774f6a",
+    "error": ""
+  },
+  {
+    "date": "2026-05-12T13:22:17",
+    "reason": "shutdown",
+    "local_path": "C:\\Users\\huzeyfe\\Desktop\\MatadorsApp_V1.1\\dist\\MatadorsApp\\MatadorsApp_Data\\backups\\manager\\2026-05\\sales_2026-05-12.db",
+    "drive_path": "",
+    "status": "local_only",
+    "checksum": "5eedc69b8205fbc27774d3f0e7f6e57c1a205fad7769a29b10ce5236af61ea2b",
+    "error": ""
+  }
+]
