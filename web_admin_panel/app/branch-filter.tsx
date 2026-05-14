@@ -2,6 +2,8 @@
 
 import { useRouter } from "next/navigation";
 
+type BranchOption = { key: string; label: string };
+
 function branchLabel(value: string) {
   const clean = String(value || "").trim();
   if (/^\d+$/.test(clean)) return `Kasa ${clean}`;
@@ -13,7 +15,7 @@ function branchLabel(value: string) {
   return spaced.charAt(0).toLocaleUpperCase("tr-TR") + spaced.slice(1);
 }
 
-export default function BranchFilter({ branches, selected }: { branches: string[]; selected: string }) {
+export default function BranchFilter({ branches, selected }: { branches: BranchOption[]; selected: string }) {
   const router = useRouter();
 
   function changeBranch(value: string) {
@@ -27,7 +29,7 @@ export default function BranchFilter({ branches, selected }: { branches: string[
       <select name="branch" value={selected} aria-label="Kasa secin" onChange={(event) => changeBranch(event.target.value)}>
         <option value="">Tum Kasalar</option>
         {branches.map((branch) => (
-          <option key={branch} value={branch}>{branchLabel(branch)}</option>
+          <option key={branch.key} value={branch.key}>{branch.label || branchLabel(branch.key)}</option>
         ))}
       </select>
     </label>

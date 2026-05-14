@@ -59,9 +59,9 @@ export async function POST(request: NextRequest) {
           archived: 0,
           is_active: 1,
           cashier_id: Number(writable.cashierId),
-          branch_id: writable.branch,
-          profile_id: writable.branch,
-          kasa_id: writable.branch,
+          branch_id: writable.branchValue,
+          profile_id: writable.branchValue,
+          kasa_id: writable.branchValue,
           created_at: new Date().toISOString()
         })
       });

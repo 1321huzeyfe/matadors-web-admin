@@ -2,7 +2,7 @@ export type Row = Record<string, unknown>;
 
 export type PanelData = {
   errors: string[];
-  branches: string[];
+  branches: BranchOption[];
   selectedBranch: string;
     summary: {
       todayTotal: number;
@@ -18,9 +18,9 @@ export type PanelData = {
   customers: Row[];
   products: Row[];
   sales: Row[];
-  balances: Array<{ name: string; branch: string; balance: number }>;
-  stock: Array<{ id: string; name: string; category: string; branch: string; stock: number; price: number }>;
-  byBranch: Array<{ branch: string; todayTotal: number; saleCount: number; customerCount: number; productCount: number; userCount: number }>;
+  balances: Array<{ name: string; branch: string; stableBranchKey: string; balance: number }>;
+  stock: Array<{ id: string; name: string; category: string; branch: string; stableBranchKey: string; stock: number; price: number }>;
+  byBranch: Array<{ branch: string; stableBranchKey: string; todayTotal: number; saleCount: number; customerCount: number; productCount: number; userCount: number }>;
   debug: {
     apiCustomers: number;
     apiProducts: number;
@@ -28,14 +28,18 @@ export type PanelData = {
     filteredCustomers: number;
     filteredProducts: number;
     selectedBranch: string;
-    matchedAliases: number;
+    selectedKey: string;
+    customersBefore: number;
+    customersAfter: number;
+    productsBefore: number;
+    productsAfter: number;
   };
 };
 
 const TABLES = ["users", "customers", "products", "sales"] as const;
-const BRANCH_KEYS = ["kasa_id", "profile_id", "branch_id"] as const;
-const EXTRA_BRANCH_KEYS = ["cashier_id", "device_id", "user_id", "cashier", "cashier_name", "kasa", "branch", "profile"] as const;
-type BranchGroup = { key: string; aliases: Set<string> };
+const STABLE_BRANCH_KEYS = ["branch_id", "kasa_id", "profile_id", "cashier_id"] as const;
+export type BranchOption = { key: string; label: string };
+type BranchGroup = { key: string; label: string; aliases: Set<string> };
 
 export function env(name: string): string {
   return (process.env[name] || "").trim();
@@ -88,18 +92,29 @@ export function normalizeBranch(value: string): string {
 }
 
 export function branchOf(row: Row): string {
-  return first(row, BRANCH_KEYS);
+  return first(row, STABLE_BRANCH_KEYS);
 }
 
-function branchCandidates(row: Row): string[] {
-  const keys = [...BRANCH_KEYS, ...EXTRA_BRANCH_KEYS];
-  const values = keys.flatMap((key) => aliasValues(first(row, [key], "").trim())).filter(Boolean);
-  return Array.from(new Set(values));
+function stableBranchKey(row: Row): string {
+  for (const field of STABLE_BRANCH_KEYS) {
+    const value = first(row, [field], "").trim();
+    if (value && !isAdminLikeBranch(value)) return `${field}:${value}`;
+  }
+  return "";
+}
+
+function stableBranchAliases(row: Row): string[] {
+  const aliases = STABLE_BRANCH_KEYS
+    .map((field) => {
+      const value = first(row, [field], "").trim();
+      return value && !isAdminLikeBranch(value) ? `${field}:${value}` : "";
+    })
+    .filter(Boolean);
+  return Array.from(new Set(aliases));
 }
 
 export function fallbackBranch(row: Row): string {
-  const candidates = branchCandidates(row);
-  return candidates.find((candidate) => !isAdminLikeBranch(candidate)) || candidates[0] || "genel-kasa";
+  return stableBranchKey(row) || "genel-kasa";
 }
 
 function saleTotal(row: Row): number {
@@ -197,71 +212,83 @@ function userId(row: Row): string {
   return first(row, ["id", "cashier_id", "user_id"], "");
 }
 
-function addGroup(groupsByKey: Map<string, BranchGroup>, key: string, candidates: string[], id = "") {
+function branchValueFromKey(key: string): string {
+  return key.split(":").slice(1).join(":");
+}
+
+function labelFromValue(value: string): string {
+  const clean = value.trim();
+  if (!clean) return "Kasa";
+  const compact = clean.toLowerCase().replace(/[^a-z0-9ığüşöç]/gi, "");
+  if (/^kasa\d+$/i.test(compact)) return `Kasa ${compact.replace(/^kasa/i, "")}`;
+  if (/^\d+$/.test(clean)) return `Kasa ${clean}`;
+  const spaced = clean.replace(/[_-]+/g, " ");
+  return spaced.charAt(0).toLocaleUpperCase("tr-TR") + spaced.slice(1);
+}
+
+function labelForRow(row: Row, key: string): string {
+  return first(row, ["full_name", "name", "username", "display_name"], "") || labelFromValue(branchValueFromKey(key));
+}
+
+function uniqueBranchOptions(groups: BranchGroup[]): BranchOption[] {
+  const labelCounts = new Map<string, number>();
+  for (const group of groups) labelCounts.set(group.label, (labelCounts.get(group.label) || 0) + 1);
+  return groups.map((group) => ({
+    key: group.key,
+    label: labelCounts.get(group.label)! > 1 ? `${group.label} (${branchValueFromKey(group.key).slice(-4)})` : group.label
+  }));
+}
+
+function addGroup(groupsByKey: Map<string, BranchGroup>, key: string, label: string, aliases: string[]) {
   if (!key) return;
-  const group = groupsByKey.get(key) || { key, aliases: new Set<string>() };
+  const group = groupsByKey.get(key) || { key, label, aliases: new Set<string>() };
+  if (!group.label || group.label === labelFromValue(branchValueFromKey(group.key))) group.label = label;
   group.aliases.add(key);
-  for (const candidate of candidates) {
-    if (candidate && !isAdminLikeBranch(candidate)) group.aliases.add(candidate);
-  }
-  if (id) group.aliases.add(id);
+  for (const alias of aliases) group.aliases.add(alias);
   groupsByKey.set(key, group);
+}
+
+function withStableBranch(row: Row): Row {
+  return { ...row, stableBranchKey: stableBranchKey(row) };
 }
 
 function buildBranchGroups(users: Row[], dataRows: Row[]): { groups: BranchGroup[]; cashierIds: Set<string>; adminIds: Set<string> } {
   const adminIds = new Set(users.filter((row) => !isCashierUser(row)).map(userId).filter(Boolean));
   const cashierIds = new Set(users.filter(isCashierUser).map(userId).filter(Boolean));
   const groupsByKey = new Map<string, BranchGroup>();
-  const userGroups = new Map<string, BranchGroup>();
 
   for (const user of users.filter(isCashierUser)) {
-    const candidates = branchCandidates(user);
-    addGroup(userGroups, branchKeyFromCandidates(candidates), candidates, userId(user));
+    const key = stableBranchKey(user);
+    addGroup(groupsByKey, key, labelForRow(user, key), stableBranchAliases(user));
   }
 
   for (const row of dataRows.filter(isActive)) {
-    const id = actorId(row);
-    if (id && adminIds.has(id)) continue;
-    const candidates = branchCandidates(row);
-    addGroup(groupsByKey, branchKeyFromCandidates(candidates), candidates, id);
-  }
-
-  const targetGroups = groupsByKey.size > 0 ? groupsByKey : userGroups;
-  for (const [key, userGroup] of Array.from(userGroups.entries())) {
-    const group = targetGroups.get(key);
-    if (!group) continue;
-    for (const alias of Array.from(userGroup.aliases)) group.aliases.add(alias);
+    const key = stableBranchKey(row);
+    if (key && !adminIds.has(branchValueFromKey(key))) addGroup(groupsByKey, key, labelFromValue(branchValueFromKey(key)), stableBranchAliases(row));
   }
 
   return {
-    groups: Array.from(targetGroups.values()).sort((a, b) => a.key.localeCompare(b.key, "tr", { numeric: true })),
+    groups: Array.from(groupsByKey.values()).sort((a, b) => a.label.localeCompare(b.label, "tr", { numeric: true })),
     cashierIds,
     adminIds
   };
 }
 
 function matchingGroup(row: Row, groups: BranchGroup[]): BranchGroup | undefined {
-  const normalized = new Set(branchCandidates(row).map(normalizeBranch));
+  const normalized = new Set(stableBranchAliases(row).map(normalizeBranch));
   if (normalized.size === 0) return undefined;
   return groups.find((group) => Array.from(group.aliases).some((alias) => normalized.has(normalizeBranch(alias))));
-}
-
-function isUnscopedLegacyRow(row: Row): boolean {
-  return branchCandidates(row).length === 0;
 }
 
 function selectedGroup(selectedBranch: string, groups: BranchGroup[]): BranchGroup | undefined {
   const selected = normalizeBranch(selectedBranch);
   if (!selected) return undefined;
-  return groups.find((group) => normalizeBranch(group.key) === selected || Array.from(group.aliases).some((alias) => normalizeBranch(alias) === selected));
+  return groups.find((group) => normalizeBranch(group.key) === selected);
 }
 
 function isRealBranchRow(row: Row, scope: ReturnType<typeof buildBranchGroups>): boolean {
-  const id = actorId(row);
-  if (id && scope.adminIds.has(id)) return false;
   if (matchingGroup(row, scope.groups)) return true;
-  if (isUnscopedLegacyRow(row) && scope.groups.length > 0) return true;
-  return Boolean(id && scope.cashierIds.has(id));
+  return false;
 }
 
 function filterRealBranches(rows: Row[], scope: ReturnType<typeof buildBranchGroups>): Row[] {
@@ -270,17 +297,17 @@ function filterRealBranches(rows: Row[], scope: ReturnType<typeof buildBranchGro
 
 function filterBranch(rows: Row[], group?: BranchGroup): Row[] {
   if (!group) return rows;
-  return rows.filter((row) => matchingGroup(row, [group]) || isUnscopedLegacyRow(row));
+  return rows.filter((row) => matchingGroup(row, [group]));
 }
 
 function displayBranchForRow(row: Row, groups: BranchGroup[], activeGroup?: BranchGroup): string {
-  return matchingGroup(row, groups)?.key || activeGroup?.key || groups[0]?.key || fallbackBranch(row);
+  return matchingGroup(row, groups)?.label || activeGroup?.label || "";
 }
 
-function ensureBranch(map: Map<string, PanelData["byBranch"][number]>, branch: string) {
-  const key = branch || "genel-kasa";
+function ensureBranch(map: Map<string, PanelData["byBranch"][number]>, group: BranchGroup) {
+  const key = group.key;
   if (!map.has(key)) {
-    map.set(key, { branch: key, todayTotal: 0, saleCount: 0, customerCount: 0, productCount: 0, userCount: 0 });
+    map.set(key, { branch: group.label, stableBranchKey: key, todayTotal: 0, saleCount: 0, customerCount: 0, productCount: 0, userCount: 0 });
   }
   return map.get(key)!;
 }
@@ -318,14 +345,17 @@ export async function loadPanelData(selectedBranch = ""): Promise<PanelData> {
   const errors = Array.from(new Set(
     [usersResult, customersResult, productsResult, salesResult].map((result) => result.error).filter(Boolean)
   ));
-  const usersAllRaw = usersResult.rows.filter(isActive);
-  const scope = buildBranchGroups(usersAllRaw, [...customersResult.rows, ...productsResult.rows, ...salesResult.rows]);
+  const usersAllRaw = usersResult.rows.filter(isActive).map(withStableBranch);
+  const customersRaw = customersResult.rows.map(withStableBranch);
+  const productsRaw = productsResult.rows.map(withStableBranch);
+  const salesRaw = salesResult.rows.map(withStableBranch);
+  const scope = buildBranchGroups(usersAllRaw, [...customersRaw, ...productsRaw, ...salesRaw]);
   const activeGroup = selectedGroup(selectedBranch, scope.groups);
   const effectiveBranch = activeGroup?.key || "";
   const usersAll = usersAllRaw.filter((row) => isRealBranchRow(row, scope));
-  const customersAll = filterRealBranches(customersResult.rows, scope);
-  const productsAll = filterRealBranches(productsResult.rows, scope);
-  const salesAll = filterRealBranches(salesResult.rows, scope);
+  const customersAll = filterRealBranches(customersRaw, scope);
+  const productsAll = filterRealBranches(productsRaw, scope);
+  const salesAll = filterRealBranches(salesRaw, scope);
 
   const users = filterBranch(usersAll, activeGroup);
   const customers = filterBranch(customersAll, activeGroup);
@@ -333,24 +363,29 @@ export async function loadPanelData(selectedBranch = ""): Promise<PanelData> {
   const sales = filterBranch(salesAll, activeGroup);
   const today = todayKey();
   const todaySales = sales.filter((sale) => dateKey(saleDateRaw(sale)) === today);
-  const branches = scope.groups.map((group) => group.key);
+  const branches = uniqueBranchOptions(scope.groups);
 
   const byBranchMap = new Map<string, PanelData["byBranch"][number]>();
-  for (const branch of branches) ensureBranch(byBranchMap, branch);
+  for (const group of scope.groups) ensureBranch(byBranchMap, group);
   for (const user of usersAll) {
     const group = matchingGroup(user, scope.groups);
-    if (group) ensureBranch(byBranchMap, group.key).userCount += 1;
+    if (group) ensureBranch(byBranchMap, group).userCount += 1;
   }
   for (const customer of customersAll) {
-    ensureBranch(byBranchMap, displayBranchForRow(customer, scope.groups, activeGroup)).customerCount += 1;
+    const group = matchingGroup(customer, scope.groups);
+    if (group) ensureBranch(byBranchMap, group).customerCount += 1;
   }
   for (const product of productsAll) {
-    ensureBranch(byBranchMap, displayBranchForRow(product, scope.groups, activeGroup)).productCount += 1;
+    const group = matchingGroup(product, scope.groups);
+    if (group) ensureBranch(byBranchMap, group).productCount += 1;
   }
   for (const sale of salesAll.filter((item) => dateKey(saleDateRaw(item)) === today)) {
-    const item = ensureBranch(byBranchMap, displayBranchForRow(sale, scope.groups, activeGroup));
-    item.saleCount += 1;
-    item.todayTotal += saleTotal(sale);
+    const group = matchingGroup(sale, scope.groups);
+    if (group) {
+      const item = ensureBranch(byBranchMap, group);
+      item.saleCount += 1;
+      item.todayTotal += saleTotal(sale);
+    }
   }
 
   return {
@@ -374,6 +409,7 @@ export async function loadPanelData(selectedBranch = ""): Promise<PanelData> {
     balances: customers.map((customer) => ({
       name: first(customer, ["name", "full_name", "customer_name", "ad_soyad"], "-"),
       branch: displayBranchForRow(customer, scope.groups, activeGroup),
+      stableBranchKey: stableBranchKey(customer),
       balance: balance(customer)
     })).sort((a, b) => a.name.localeCompare(b.name, "tr")).slice(0, 200),
     stock: products.map((product) => ({
@@ -381,11 +417,12 @@ export async function loadPanelData(selectedBranch = ""): Promise<PanelData> {
       name: first(product, ["name", "product_name", "title", "urun_adi"], "-"),
       category: first(product, ["category", "kategori"], ""),
       branch: displayBranchForRow(product, scope.groups, activeGroup),
+      stableBranchKey: stableBranchKey(product),
       stock: stock(product),
       price: price(product)
     })).sort((a, b) => a.name.localeCompare(b.name, "tr")).slice(0, 200),
     byBranch: Array.from(byBranchMap.values())
-      .filter((item) => !effectiveBranch || normalizeBranch(item.branch) === normalizeBranch(effectiveBranch))
+      .filter((item) => !effectiveBranch || item.stableBranchKey === effectiveBranch)
       .sort((a, b) => a.branch.localeCompare(b.branch, "tr")),
     debug: {
       apiCustomers: customersResult.rows.length,
@@ -394,18 +431,23 @@ export async function loadPanelData(selectedBranch = ""): Promise<PanelData> {
       filteredCustomers: customers.length,
       filteredProducts: products.length,
       selectedBranch: effectiveBranch || "Tüm Kasalar",
-      matchedAliases: activeGroup ? activeGroup.aliases.size : scope.groups.reduce((total, group) => total + group.aliases.size, 0)
+      selectedKey: effectiveBranch || "ALL",
+      customersBefore: customersAll.length,
+      customersAfter: customers.length,
+      productsBefore: productsAll.length,
+      productsAfter: products.length
     }
   };
 }
 
-export async function loadWritableBranches(): Promise<Array<{ branch: string; cashierId: string; label: string }>> {
+export async function loadWritableBranches(): Promise<Array<{ branch: string; branchValue: string; cashierId: string; label: string }>> {
   const users = (await select("users")).filter(isCashierUser);
   const rows = users
     .map((user) => {
-      const branch = fallbackBranch(user);
+      const branch = stableBranchKey(user);
       return {
         branch,
+        branchValue: branchValueFromKey(branch),
         cashierId: first(user, ["id", "cashier_id"], ""),
         label: first(user, ["full_name", "name", "username"], branch)
       };

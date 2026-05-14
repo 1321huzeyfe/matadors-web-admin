@@ -43,7 +43,11 @@ export async function GET(request: NextRequest) {
         filteredCustomers: 0,
         filteredProducts: 0,
         selectedBranch: "",
-        matchedAliases: 0
+        selectedKey: "ALL",
+        customersBefore: 0,
+        customersAfter: 0,
+        productsBefore: 0,
+        productsAfter: 0
       }
     }, { headers: { "Cache-Control": "no-store" } });
   }

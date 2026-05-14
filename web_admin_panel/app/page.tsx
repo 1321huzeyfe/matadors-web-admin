@@ -1,4 +1,4 @@
-import { branchOf, loadPanelData, Row } from "../lib/supabase-readonly";
+﻿import { branchOf, loadPanelData, Row } from "../lib/supabase-readonly";
 import { isPageAuthenticated } from "../lib/auth";
 import BranchFilter from "./branch-filter";
 import LoginForm from "./login-form";
@@ -51,7 +51,7 @@ function branchLabel(value: string) {
 
 function isAdminLikeBranch(value: string) {
   const clean = String(value || "").trim().toLocaleLowerCase("tr-TR");
-  return !clean || clean.includes("admin") || clean.includes("genel") || clean.includes("manager") || clean.includes("yonetici") || clean.includes("yönetici");
+  return !clean || clean.includes("admin") || clean.includes("genel") || clean.includes("manager") || clean.includes("yonetici") || clean.includes("yÃ¶netici");
 }
 
 function isRealBranch(value: string) {
@@ -113,9 +113,9 @@ function Sidebar() {
   return (
     <aside className="sidebar">
       <details className="mobile-menu">
-        <summary><Icon name="menu" /> Menü</summary>
-        <a className="side-link active" href="#customers"><Icon name="users" /> Müşteriler</a>
-        <a className="side-link" href="#products"><Icon name="box" /> Ürünler</a>
+        <summary><Icon name="menu" /> MenÃ¼</summary>
+        <a className="side-link active" href="#customers"><Icon name="users" /> MÃ¼ÅŸteriler</a>
+        <a className="side-link" href="#products"><Icon name="box" /> ÃœrÃ¼nler</a>
       </details>
       <div className="brand">
         <div className="brand-logo">
@@ -123,14 +123,14 @@ function Sidebar() {
         </div>
         <div>
           <strong>MATADORS</strong>
-          <span>Yönetici Paneli</span>
+          <span>YÃ¶netici Paneli</span>
         </div>
       </div>
 
-      <nav className="side-nav" aria-label="Panel menüsü">
+      <nav className="side-nav" aria-label="Panel menÃ¼sÃ¼">
         <a className="side-link active" href="#">
           <Icon name="overview" />
-          Özet
+          Ã–zet
         </a>
       </nav>
 
@@ -178,10 +178,11 @@ export default async function Page({ searchParams }: { searchParams?: { branch?:
 
   const selectedBranch = searchParams?.branch || "";
   const data = await loadPanelData(selectedBranch);
-  const pageBranches = data.branches.filter(isRealBranch);
-  const pageActiveBranch = data.selectedBranch && pageBranches.includes(data.selectedBranch) ? data.selectedBranch : "";
-  const filteredBalances = data.balances.filter((item) => isRealBranch(item.branch));
-  const filteredStock = data.stock.filter((item) => isRealBranch(item.branch));
+  const pageBranches = data.branches;
+  const pageActiveBranch = data.selectedBranch && pageBranches.some((branch) => branch.key === data.selectedBranch) ? data.selectedBranch : "";
+  const activeBranchOption = pageBranches.find((branch) => branch.key === pageActiveBranch);
+  const filteredBalances = data.balances;
+  const filteredStock = data.stock;
   const filteredSales = data.sales;
   const pageTodaySales = filteredSales.filter((sale) => saleDateRaw(sale).slice(0, 10) === todayKey());
   const pageSummary = {
@@ -193,7 +194,7 @@ export default async function Page({ searchParams }: { searchParams?: { branch?:
     saleCount: filteredSales.length,
     todayTotal: pageTodaySales.reduce((total, sale) => total + firstNumber(sale, ["total", "total_amount", "grand_total", "amount", "net_total", "tutar", "toplam"]), 0)
   };
-  const pageActiveBranchLabel = pageActiveBranch ? branchLabel(pageActiveBranch) : "Tüm Kasalar";
+  const pageActiveBranchLabel = activeBranchOption?.label || "Tüm Kasalar";
   const activeBranchLabel = pageActiveBranchLabel;
   const visibleBalances = filteredBalances.slice(0, 10);
   const visibleStock = filteredStock.slice(0, 10);
@@ -201,7 +202,8 @@ export default async function Page({ searchParams }: { searchParams?: { branch?:
     ...data.debug,
     filteredCustomers: filteredBalances.length,
     filteredProducts: filteredStock.length,
-    selectedBranch: pageActiveBranch || "Tüm Kasalar"
+    selectedBranch: pageActiveBranchLabel,
+    selectedKey: pageActiveBranch || "ALL"
   };
 
   return (
@@ -212,9 +214,9 @@ export default async function Page({ searchParams }: { searchParams?: { branch?:
         <header className="overview-card">
           <div className="overview-title">
             <span className="version-pill">v2</span>
-            <h1>Özet</h1>
-            <span>Sistem durumu ve genel bakış</span>
-            <small>{activeBranchLabel} için son güncelleme: {dateText(pageSummary.updatedAt)}</small>
+            <h1>Ã–zet</h1>
+            <span>Sistem durumu ve genel bakÄ±ÅŸ</span>
+            <small>{activeBranchLabel} iÃ§in son gÃ¼ncelleme: {dateText(pageSummary.updatedAt)}</small>
           </div>
           <div className="topbar-actions">
             <BranchFilter branches={pageBranches} selected={pageActiveBranch} />
@@ -227,20 +229,20 @@ export default async function Page({ searchParams }: { searchParams?: { branch?:
         </header>
 
         <section className="debug-strip">
-          API customers: {numberText(debug.apiCustomers)}, products: {numberText(debug.apiProducts)}, sales: {numberText(debug.apiSales)}, filtered customers: {numberText(debug.filteredCustomers)}, filtered products: {numberText(debug.filteredProducts)}, selectedBranch: {debug.selectedBranch}, matched aliases: {numberText(debug.matchedAliases)}
+          API customers: {numberText(debug.apiCustomers)}, products: {numberText(debug.apiProducts)}, sales: {numberText(debug.apiSales)}, customers before/after: {numberText(debug.customersBefore)}/{numberText(debug.customersAfter)}, products before/after: {numberText(debug.productsBefore)}/{numberText(debug.productsAfter)}, selectedKey: {debug.selectedKey}
         </section>
 
         {data.errors.length > 0 && (
           <section className="error-box">
-            Veri alınamadı. Supabase bağlantısını kontrol edin.
+            Veri alÄ±namadÄ±. Supabase baÄŸlantÄ±sÄ±nÄ± kontrol edin.
           </section>
         )}
 
-        <section className="metrics" aria-label="Özet kartları">
-          <StatCard tone="blue" icon="users" label="Toplam Müşteri" value={numberText(pageSummary.customerCount)} hint="Aktif müşteriler" />
-          <StatCard tone="green" icon="cash" label="Toplam Bakiye" value={money(pageSummary.totalBalance)} hint="Tüm müşterilerin bakiyesi" />
-          <StatCard tone="purple" icon="box" label="Toplam Ürün" value={numberText(pageSummary.productCount)} hint="Stoktaki ürün sayısı" />
-          <StatCard tone="orange" icon="moves" label="Toplam Stok" value={numberText(pageSummary.totalStock)} hint="Tüm ürün stokları" />
+        <section className="metrics" aria-label="Ã–zet kartlarÄ±">
+          <StatCard tone="blue" icon="users" label="Toplam MÃ¼ÅŸteri" value={numberText(pageSummary.customerCount)} hint="Aktif mÃ¼ÅŸteriler" />
+          <StatCard tone="green" icon="cash" label="Toplam Bakiye" value={money(pageSummary.totalBalance)} hint="TÃ¼m mÃ¼ÅŸterilerin bakiyesi" />
+          <StatCard tone="purple" icon="box" label="Toplam ÃœrÃ¼n" value={numberText(pageSummary.productCount)} hint="Stoktaki Ã¼rÃ¼n sayÄ±sÄ±" />
+          <StatCard tone="orange" icon="moves" label="Toplam Stok" value={numberText(pageSummary.totalStock)} hint="TÃ¼m Ã¼rÃ¼n stoklarÄ±" />
         </section>
 
         <section className="panel-grid primary-panels">
@@ -248,24 +250,24 @@ export default async function Page({ searchParams }: { searchParams?: { branch?:
             <div className="panel-action-strip">
               <a className="button button-primary" href={`/api/customers/pdf${pageActiveBranch ? `?branch=${encodeURIComponent(pageActiveBranch)}` : ""}`}>
                 <Icon name="download" />
-                PDF İndir
+                PDF Ä°ndir
               </a>
             </div>
             <div className="panel-heading">
               <div className="panel-title">
                 <span className="panel-icon blue"><Icon name="users" /></span>
-                <h2>Müşteri Bakiyeleri</h2>
+                <h2>MÃ¼ÅŸteri Bakiyeleri</h2>
               </div>
-              <a className="view-all" href="#customers">Tümünü Gör <Icon name="chevron" /></a>
+              <a className="view-all" href="#customers">TÃ¼mÃ¼nÃ¼ GÃ¶r <Icon name="chevron" /></a>
             </div>
             <div className="table-frame">
               <table>
-                <thead><tr><th>Müşteri</th><th>Kasa</th><th className="numeric">Bakiye</th></tr></thead>
+                <thead><tr><th>MÃ¼ÅŸteri</th><th>Kasa</th><th className="numeric">Bakiye</th></tr></thead>
                 <tbody>
-                  {visibleBalances.length === 0 && <tr><td className="empty" colSpan={3}>Kayıt yok</td></tr>}
+                  {visibleBalances.length === 0 && <tr><td className="empty" colSpan={3}>KayÄ±t yok</td></tr>}
                   {visibleBalances.map((customer) => (
-                    <tr key={`${customer.branch}-${customer.name}`}>
-                      <td data-label="Müşteri" className="strong-cell">{customer.name}</td>
+                    <tr key={`${customer.stableBranchKey}-${customer.name}`}>
+                      <td data-label="MÃ¼ÅŸteri" className="strong-cell">{customer.name}</td>
                       <td data-label="Kasa">{branchLabel(customer.branch || "genel-kasa")}</td>
                       <td data-label="Bakiye" className={`numeric ${balanceClass(customer.balance)}`}>{money(customer.balance)}</td>
                     </tr>
@@ -274,7 +276,7 @@ export default async function Page({ searchParams }: { searchParams?: { branch?:
               </table>
             </div>
             <footer className="panel-footer">
-              <span>Toplam {numberText(filteredBalances.length)} müşteri</span>
+              <span>Toplam {numberText(filteredBalances.length)} mÃ¼ÅŸteri</span>
               <Pager total={filteredBalances.length} pageSize={10} />
             </footer>
           </article>
@@ -283,18 +285,18 @@ export default async function Page({ searchParams }: { searchParams?: { branch?:
             <div className="panel-heading">
               <div className="panel-title">
                 <span className="panel-icon purple"><Icon name="box" /></span>
-                <h2>Ürün Stokları</h2>
+                <h2>ÃœrÃ¼n StoklarÄ±</h2>
               </div>
-              <a className="view-all" href="#products">Tümünü Gör <Icon name="chevron" /></a>
+              <a className="view-all" href="#products">TÃ¼mÃ¼nÃ¼ GÃ¶r <Icon name="chevron" /></a>
             </div>
             <div className="table-frame">
               <table>
-                <thead><tr><th>Ürün</th><th>Kasa</th><th className="numeric">Stok</th><th className="numeric">Fiyat</th></tr></thead>
+                <thead><tr><th>ÃœrÃ¼n</th><th>Kasa</th><th className="numeric">Stok</th><th className="numeric">Fiyat</th></tr></thead>
                 <tbody>
-                  {visibleStock.length === 0 && <tr><td className="empty" colSpan={4}>Kayıt yok</td></tr>}
+                  {visibleStock.length === 0 && <tr><td className="empty" colSpan={4}>KayÄ±t yok</td></tr>}
                   {visibleStock.map((product) => (
-                    <tr key={`${product.branch}-${product.name}`}>
-                      <td data-label="Ürün" className="strong-cell">{product.name}</td>
+                    <tr key={`${product.stableBranchKey}-${product.name}`}>
+                      <td data-label="ÃœrÃ¼n" className="strong-cell">{product.name}</td>
                       <td data-label="Kasa">{branchLabel(product.branch || "genel-kasa")}</td>
                       <td data-label="Stok" className="numeric">{numberText(product.stock)}</td>
                       <td data-label="Fiyat" className="numeric">{money(product.price)}</td>
@@ -304,7 +306,7 @@ export default async function Page({ searchParams }: { searchParams?: { branch?:
               </table>
             </div>
             <footer className="panel-footer">
-              <span>Toplam {numberText(filteredStock.length)} ürün</span>
+              <span>Toplam {numberText(filteredStock.length)} Ã¼rÃ¼n</span>
               <Pager total={filteredStock.length} pageSize={10} />
             </footer>
           </article>
@@ -316,20 +318,20 @@ export default async function Page({ searchParams }: { searchParams?: { branch?:
 
         <section id="branches" className="mini-grid">
           <article className="mini-card">
-            <strong>Bugünkü satış</strong>
+            <strong>BugÃ¼nkÃ¼ satÄ±ÅŸ</strong>
             <span>{money(pageSummary.todayTotal)}</span>
           </article>
           <article id="moves" className="mini-card">
-            <strong>Satış adedi</strong>
+            <strong>SatÄ±ÅŸ adedi</strong>
             <span>{numberText(pageSummary.saleCount)}</span>
           </article>
           <article className="mini-card">
-            <strong>Kasa özeti</strong>
+            <strong>Kasa Ã¶zeti</strong>
             <span>{numberText(pageBranches.length)} kasa</span>
           </article>
         </section>
 
-        <footer className="page-footer">© 2025 Matadors App. Tüm hakları saklıdır.</footer>
+        <footer className="page-footer">Â© 2025 Matadors App. TÃ¼m haklarÄ± saklÄ±dÄ±r.</footer>
       </main>
     </div>
   );
