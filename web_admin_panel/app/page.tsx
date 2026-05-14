@@ -180,12 +180,9 @@ export default async function Page({ searchParams }: { searchParams?: { branch?:
   const data = await loadPanelData(selectedBranch);
   const pageBranches = data.branches.filter(isRealBranch);
   const pageActiveBranch = data.selectedBranch && pageBranches.includes(data.selectedBranch) ? data.selectedBranch : "";
-  const filteredBalances = data.balances.filter((item) => isRealBranch(item.branch) && (!pageActiveBranch || item.branch === pageActiveBranch));
-  const filteredStock = data.stock.filter((item) => isRealBranch(item.branch) && (!pageActiveBranch || item.branch === pageActiveBranch));
-  const filteredSales = data.sales.filter((item) => {
-    const branch = rowBranch(item, pageActiveBranch);
-    return isRealBranch(branch) && (!pageActiveBranch || branch === pageActiveBranch || branchLabel(branch) === branchLabel(pageActiveBranch));
-  });
+  const filteredBalances = data.balances.filter((item) => isRealBranch(item.branch));
+  const filteredStock = data.stock.filter((item) => isRealBranch(item.branch));
+  const filteredSales = data.sales;
   const pageTodaySales = filteredSales.filter((sale) => saleDateRaw(sale).slice(0, 10) === todayKey());
   const pageSummary = {
     ...data.summary,
@@ -203,7 +200,8 @@ export default async function Page({ searchParams }: { searchParams?: { branch?:
   const debug = {
     ...data.debug,
     filteredCustomers: filteredBalances.length,
-    filteredProducts: filteredStock.length
+    filteredProducts: filteredStock.length,
+    selectedBranch: pageActiveBranch || "Tüm Kasalar"
   };
 
   return (
@@ -229,7 +227,7 @@ export default async function Page({ searchParams }: { searchParams?: { branch?:
         </header>
 
         <section className="debug-strip">
-          API customers: {numberText(debug.apiCustomers)}, products: {numberText(debug.apiProducts)}, sales: {numberText(debug.apiSales)}, filtered customers: {numberText(debug.filteredCustomers)}, filtered products: {numberText(debug.filteredProducts)}
+          API customers: {numberText(debug.apiCustomers)}, products: {numberText(debug.apiProducts)}, sales: {numberText(debug.apiSales)}, filtered customers: {numberText(debug.filteredCustomers)}, filtered products: {numberText(debug.filteredProducts)}, selectedBranch: {debug.selectedBranch}, matched aliases: {numberText(debug.matchedAliases)}
         </section>
 
         {data.errors.length > 0 && (
