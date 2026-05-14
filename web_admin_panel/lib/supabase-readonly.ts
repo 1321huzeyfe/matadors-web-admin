@@ -19,7 +19,7 @@ export type PanelData = {
   products: Row[];
   sales: Row[];
   balances: Array<{ name: string; branch: string; balance: number }>;
-  stock: Array<{ name: string; branch: string; stock: number; price: number }>;
+  stock: Array<{ id: string; name: string; category: string; branch: string; stock: number; price: number }>;
   byBranch: Array<{ branch: string; todayTotal: number; saleCount: number; customerCount: number; productCount: number; userCount: number }>;
 };
 
@@ -27,7 +27,7 @@ const TABLES = ["users", "customers", "products", "sales"] as const;
 const BRANCH_KEYS = ["kasa_id", "profile_id", "branch_id"] as const;
 const EXTRA_BRANCH_KEYS = ["cashier_id", "device_id", "user_id", "cashier", "kasa", "branch", "profile"] as const;
 
-function env(name: string): string {
+export function env(name: string): string {
   return (process.env[name] || "").trim();
 }
 
@@ -37,12 +37,12 @@ function keyOf(row: Row, key: string): string | undefined {
   return Object.keys(row).find((existing) => existing.toLowerCase() === wanted);
 }
 
-function valueOf(row: Row, key: string): unknown {
+export function valueOf(row: Row, key: string): unknown {
   const actual = keyOf(row, key);
   return actual ? row[actual] : undefined;
 }
 
-function numberValue(value: unknown): number {
+export function numberValue(value: unknown): number {
   if (typeof value === "number") return Number.isFinite(value) ? value : 0;
   const clean = String(value ?? "")
     .replace(/\s/g, "")
@@ -57,7 +57,7 @@ function stringValue(value: unknown): string {
   return value === null || value === undefined ? "" : String(value);
 }
 
-function first(row: Row, keys: readonly string[], fallback = ""): string {
+export function first(row: Row, keys: readonly string[], fallback = ""): string {
   for (const key of keys) {
     const value = stringValue(valueOf(row, key)).trim();
     if (value) return value;
@@ -73,7 +73,7 @@ function firstNumber(row: Row, keys: readonly string[]): number {
   return 0;
 }
 
-function normalizeBranch(value: string): string {
+export function normalizeBranch(value: string): string {
   return value.trim().toLowerCase();
 }
 
@@ -85,7 +85,7 @@ function branchKey(row: Row): string {
   return normalizeBranch(branchOf(row));
 }
 
-function fallbackBranch(row: Row): string {
+export function fallbackBranch(row: Row): string {
   return branchOf(row) || first(row, EXTRA_BRANCH_KEYS, "genel-kasa");
 }
 
@@ -93,15 +93,15 @@ function saleTotal(row: Row): number {
   return firstNumber(row, ["total", "total_amount", "grand_total", "amount", "net_total", "price", "tutar", "toplam", "total_price"]);
 }
 
-function balance(row: Row): number {
+export function balance(row: Row): number {
   return firstNumber(row, ["balance", "current_balance", "bakiye", "debt_balance", "remaining_balance"]);
 }
 
-function stock(row: Row): number {
+export function stock(row: Row): number {
   return firstNumber(row, ["stock", "stock_quantity", "quantity", "qty", "stok", "current_stock"]);
 }
 
-function price(row: Row): number {
+export function price(row: Row): number {
   return firstNumber(row, ["price", "sale_price", "unit_price", "fiyat", "selling_price"]);
 }
 
@@ -122,10 +122,64 @@ function todayKey(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
-function isActive(row: Row): boolean {
+export function isActive(row: Row): boolean {
   const archived = valueOf(row, "archived");
   const is_active = valueOf(row, "is_active");
   return archived !== true && archived !== 1 && is_active !== false && is_active !== 0;
+}
+
+function isAdminLikeBranch(branch: string): boolean {
+  const clean = normalizeBranch(branch);
+  if (clean.includes("admin") || clean.includes("genel") || clean.includes("manager")) return true;
+  return !clean || clean === "admin" || clean === "manager" || clean === "genel-kasa" || clean === "general" || clean === "yonetici" || clean === "yönetici";
+}
+
+function isCashierUser(row: Row): boolean {
+  const role = first(row, ["user_type", "role", "type"], "").toLowerCase();
+  return isActive(row) && (role === "cashier" || role === "kasa");
+}
+
+function actorId(row: Row): string {
+  return first(row, ["cashier_id", "user_id"], "");
+}
+
+function userId(row: Row): string {
+  return first(row, ["id", "cashier_id", "user_id"], "");
+}
+
+function realScope(users: Row[], dataRows: Row[]) {
+  const cashierIds = new Set(users.filter(isCashierUser).map(userId).filter(Boolean));
+  const adminIds = new Set(users.filter((row) => !isCashierUser(row)).map(userId).filter(Boolean));
+  const branches = new Set<string>();
+
+  for (const row of users.filter(isCashierUser)) {
+    const branch = fallbackBranch(row).trim();
+    if (branch && !isAdminLikeBranch(branch)) branches.add(branch);
+  }
+
+  for (const row of dataRows.filter(isActive)) {
+    const branch = fallbackBranch(row).trim();
+    const id = actorId(row);
+    if (!branch || isAdminLikeBranch(branch)) continue;
+    if (id && adminIds.has(id)) continue;
+    if (id && cashierIds.size > 0 && !cashierIds.has(id) && /^\d+$/.test(branch)) continue;
+    branches.add(branch);
+  }
+
+  return { branches, cashierIds, adminIds };
+}
+
+function isRealBranchRow(row: Row, scope: ReturnType<typeof realScope>): boolean {
+  const branch = fallbackBranch(row).trim();
+  const id = actorId(row);
+  if (!branch || isAdminLikeBranch(branch)) return false;
+  if (id && scope.adminIds.has(id)) return false;
+  if (scope.branches.has(branch)) return true;
+  return Boolean(id && scope.cashierIds.has(id));
+}
+
+function filterRealBranches(rows: Row[], scope: ReturnType<typeof realScope>): Row[] {
+  return rows.filter((row) => isActive(row) && isRealBranchRow(row, scope));
 }
 
 function filterBranch(rows: Row[], selectedBranch: string): Row[] {
@@ -142,7 +196,7 @@ function ensureBranch(map: Map<string, PanelData["byBranch"][number]>, branch: s
   return map.get(key)!;
 }
 
-async function select(table: string): Promise<Row[]> {
+export async function select(table: string): Promise<Row[]> {
   const url = env("SUPABASE_URL").replace(/\/+$/, "");
   const key = env("SUPABASE_SERVICE_ROLE_KEY");
   if (!url || !key) throw new Error("SUPABASE_URL veya SUPABASE_SERVICE_ROLE_KEY eksik.");
@@ -175,22 +229,25 @@ export async function loadPanelData(selectedBranch = ""): Promise<PanelData> {
   const errors = Array.from(new Set(
     [usersResult, customersResult, productsResult, salesResult].map((result) => result.error).filter(Boolean)
   ));
-  const usersAll = usersResult.rows.filter(isActive);
-  const customersAll = customersResult.rows;
-  const productsAll = productsResult.rows;
-  const salesAll = salesResult.rows;
+  const usersAllRaw = usersResult.rows.filter(isActive);
+  const scope = realScope(usersAllRaw, [...customersResult.rows, ...productsResult.rows, ...salesResult.rows]);
+  const realBranches = scope.branches;
+  const selectedIsReal = !selectedBranch || realBranches.has(selectedBranch);
+  const effectiveBranch = selectedIsReal ? selectedBranch : "";
+  const usersAll = usersAllRaw.filter((row) => isRealBranchRow(row, scope));
+  const customersAll = filterRealBranches(customersResult.rows, scope);
+  const productsAll = filterRealBranches(productsResult.rows, scope);
+  const salesAll = filterRealBranches(salesResult.rows, scope);
 
-  const users = filterBranch(usersAll, selectedBranch);
-  const customers = filterBranch(customersAll, selectedBranch);
-  const products = filterBranch(productsAll, selectedBranch);
-  const sales = filterBranch(salesAll, selectedBranch);
+  const users = filterBranch(usersAll, effectiveBranch);
+  const customers = filterBranch(customersAll, effectiveBranch);
+  const products = filterBranch(productsAll, effectiveBranch);
+  const sales = filterBranch(salesAll, effectiveBranch);
   const today = todayKey();
   const todaySales = sales.filter((sale) => dateKey(saleDateRaw(sale)) === today);
   const branches = Array.from(new Set([
     ...usersAll.map(fallbackBranch),
-    ...customersAll.map(fallbackBranch),
-    ...productsAll.map(fallbackBranch),
-    ...salesAll.map(fallbackBranch)
+    ...Array.from(realBranches)
   ].map((branch) => branch.trim()).filter(Boolean))).sort((a, b) => a.localeCompare(b, "tr"));
 
   const byBranchMap = new Map<string, PanelData["byBranch"][number]>();
@@ -207,7 +264,7 @@ export async function loadPanelData(selectedBranch = ""): Promise<PanelData> {
   return {
     errors,
     branches,
-    selectedBranch,
+    selectedBranch: effectiveBranch,
     summary: {
       todayTotal: todaySales.reduce((total, sale) => total + saleTotal(sale), 0),
       saleCount: sales.length,
@@ -228,13 +285,50 @@ export async function loadPanelData(selectedBranch = ""): Promise<PanelData> {
       balance: balance(customer)
     })).sort((a, b) => a.name.localeCompare(b.name, "tr")).slice(0, 200),
     stock: products.map((product) => ({
+      id: first(product, ["id"], ""),
       name: first(product, ["name", "product_name", "title", "urun_adi"], "-"),
+      category: first(product, ["category", "kategori"], ""),
       branch: fallbackBranch(product),
       stock: stock(product),
       price: price(product)
     })).sort((a, b) => a.name.localeCompare(b.name, "tr")).slice(0, 200),
     byBranch: Array.from(byBranchMap.values())
-      .filter((item) => !selectedBranch || normalizeBranch(item.branch) === normalizeBranch(selectedBranch))
+      .filter((item) => !effectiveBranch || normalizeBranch(item.branch) === normalizeBranch(effectiveBranch))
       .sort((a, b) => a.branch.localeCompare(b.branch, "tr"))
   };
+}
+
+export async function loadWritableBranches(): Promise<Array<{ branch: string; cashierId: string; label: string }>> {
+  const users = (await select("users")).filter(isCashierUser);
+  const rows = users
+    .map((user) => {
+      const branch = fallbackBranch(user);
+      return {
+        branch,
+        cashierId: first(user, ["id", "cashier_id"], ""),
+        label: first(user, ["full_name", "name", "username"], branch)
+      };
+    })
+    .filter((row) => row.branch && row.cashierId && !isAdminLikeBranch(row.branch));
+  return rows.sort((a, b) => a.label.localeCompare(b.label, "tr"));
+}
+
+export async function restRequest(table: string, init: RequestInit & { query?: string } = {}) {
+  const url = env("SUPABASE_URL").replace(/\/+$/, "");
+  const key = env("SUPABASE_SERVICE_ROLE_KEY");
+  if (!url || !key) throw new Error("SUPABASE_URL veya SUPABASE_SERVICE_ROLE_KEY eksik.");
+  const response = await fetch(`${url}/rest/v1/${table}${init.query || ""}`, {
+    ...init,
+    headers: {
+      apikey: key,
+      Authorization: `Bearer ${key}`,
+      "Content-Type": "application/json",
+      Prefer: "return=representation",
+      ...(init.headers || {})
+    },
+    cache: "no-store"
+  });
+  const text = await response.text();
+  if (!response.ok) throw new Error(`${table}: ${response.status} ${text}`);
+  return text ? JSON.parse(text) : [];
 }

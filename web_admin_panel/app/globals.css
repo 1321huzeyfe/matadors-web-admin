@@ -51,6 +51,17 @@ select {
   font: inherit;
 }
 
+input {
+  background: #fff;
+  border: 1px solid #cfd8e6;
+  border-radius: 6px;
+  color: var(--text);
+  min-height: 46px;
+  outline: none;
+  padding: 0 13px;
+  width: 100%;
+}
+
 h1,
 h2,
 p {
@@ -78,6 +89,10 @@ p {
   top: 0;
   width: 288px;
   z-index: 10;
+}
+
+.mobile-menu {
+  display: none;
 }
 
 .brand {
@@ -307,6 +322,11 @@ select:focus,
   white-space: nowrap;
 }
 
+.button-row {
+  display: flex;
+  gap: 10px;
+}
+
 .button:hover {
   transform: translateY(-1px);
 }
@@ -465,6 +485,23 @@ select:focus,
   display: flex;
   justify-content: space-between;
   padding: 26px 26px 22px;
+}
+
+.panel-action-strip {
+  display: flex;
+  justify-content: flex-end;
+  padding: 18px 26px 0;
+}
+
+.panel-heading.compact {
+  align-items: flex-start;
+  padding-bottom: 12px;
+}
+
+.panel-note {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 760;
 }
 
 .panel-title {
@@ -658,6 +695,50 @@ tbody tr:hover {
   margin-top: 24px;
 }
 
+.stock-action-section {
+  grid-template-columns: 1fr;
+  margin-top: 24px;
+}
+
+.stock-tools {
+  min-height: 0;
+}
+
+.stock-tools-grid {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  padding: 0 18px 22px;
+}
+
+.tool-card {
+  background: var(--surface-soft);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+}
+
+.tool-card strong {
+  color: #0f172a;
+  font-size: 15px;
+  font-weight: 900;
+}
+
+.form-row {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.form-message {
+  color: var(--blue-dark);
+  font-weight: 800;
+  margin: 0;
+  padding: 0 20px 20px;
+}
+
 .mini-card {
   background: rgba(255, 255, 255, 0.82);
   border: 1px solid rgba(225, 232, 242, 0.96);
@@ -779,26 +860,51 @@ tbody tr:hover {
   .sidebar {
     bottom: auto;
     min-height: auto;
-    position: relative;
+    padding: 14px 16px;
+    position: sticky;
     width: 100%;
+    z-index: 20;
   }
 
   .brand {
-    margin-bottom: 18px;
+    margin-bottom: 0;
+    padding-bottom: 0;
   }
 
-  .side-nav {
-    display: flex;
-    overflow-x: auto;
-    padding-bottom: 4px;
+  .mobile-menu {
+    display: block;
+    margin-bottom: 12px;
+  }
+
+  .mobile-menu summary {
+    align-items: center;
+    background: rgba(255, 255, 255, 0.1);
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    border-radius: 8px;
+    cursor: pointer;
+    display: inline-flex;
+    font-weight: 850;
+    gap: 10px;
+    min-height: 46px;
+    padding: 0 14px;
+  }
+
+  .mobile-menu[open] {
+    display: grid;
+    gap: 8px;
+  }
+
+  .mobile-menu .side-link {
+    margin-top: 8px;
+  }
+
+  .side-nav,
+  .system-card {
+    display: none;
   }
 
   .side-link {
     flex: 0 0 auto;
-  }
-
-  .system-card {
-    margin-top: 18px;
   }
 }
 
@@ -824,7 +930,8 @@ tbody tr:hover {
   }
 
   .metrics,
-  .mini-grid {
+  .mini-grid,
+  .stock-tools-grid {
     grid-template-columns: 1fr;
   }
 }
@@ -852,6 +959,19 @@ tbody tr:hover {
     width: 100%;
   }
 
+  .button {
+    min-height: 48px;
+  }
+
+  .button-row,
+  .form-row {
+    grid-template-columns: 1fr;
+  }
+
+  .button-row {
+    flex-direction: column;
+  }
+
   .panel-heading,
   .panel-footer {
     align-items: flex-start;
@@ -860,11 +980,59 @@ tbody tr:hover {
   }
 
   .table-frame {
+    border: 0;
     margin: 0 12px;
+    max-height: none;
+    overflow: visible;
   }
 
+  table,
+  thead,
+  tbody,
+  tr,
   th,
   td {
-    padding: 13px 14px;
+    display: block;
+  }
+
+  thead {
+    display: none;
+  }
+
+  tbody tr {
+    background: #fff;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    margin-bottom: 10px;
+    padding: 10px 12px;
+  }
+
+  td {
+    align-items: flex-start;
+    border-bottom: 0;
+    display: flex;
+    gap: 14px;
+    justify-content: space-between;
+    padding: 8px 0;
+    text-align: right;
+    white-space: normal;
+  }
+
+  td::before {
+    color: var(--muted);
+    content: attr(data-label);
+    flex: 0 0 82px;
+    font-size: 12px;
+    font-weight: 850;
+    text-align: left;
+  }
+
+  td.empty {
+    display: block;
+    text-align: center;
+  }
+
+  td.empty::before {
+    content: "";
   }
 }

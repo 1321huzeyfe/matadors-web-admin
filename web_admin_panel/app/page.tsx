@@ -3,6 +3,7 @@ import { isPageAuthenticated } from "../lib/auth";
 import BranchFilter from "./branch-filter";
 import LoginForm from "./login-form";
 import LogoutButton from "./logout-button";
+import ProductTools from "./product-tools";
 
 export const dynamic = "force-dynamic";
 
@@ -39,6 +40,7 @@ function balanceClass(value: number) {
 function branchLabel(value: string) {
   const clean = String(value || "").trim() || "genel-kasa";
   if (clean === "genel-kasa") return "genel-kasa";
+  if (/^\d+$/.test(clean)) return `Kasa ${clean}`;
   const spaced = clean
     .replace(/[_-]+/g, " ")
     .replace(/\bkasa\s*(\d+)\b/gi, "Kasa $1")
@@ -56,7 +58,7 @@ function rowBranch(row: Row, selectedBranch = "") {
   );
 }
 
-function Icon({ name }: { name: "overview" | "cash" | "users" | "box" | "moves" | "branches" | "report" | "settings" | "refresh" | "chevron" }) {
+function Icon({ name }: { name: "overview" | "cash" | "users" | "box" | "moves" | "branches" | "report" | "settings" | "refresh" | "chevron" | "download" | "menu" }) {
   const paths = {
     overview: "M3 10.5 12 3l9 7.5V21h-6v-6H9v6H3V10.5Z",
     cash: "M4 7h16v10H4V7Zm3 3h2m6 4h2m-5-5a3 3 0 1 0 0 6 3 3 0 0 0 0-6Z",
@@ -67,7 +69,9 @@ function Icon({ name }: { name: "overview" | "cash" | "users" | "box" | "moves" 
     report: "M7 4h7l3 3v13H7V4Zm7 0v4h4M9 12h6M9 16h6M9 8h3",
     settings: "M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8Zm8 4h-2m-12 0H4m13.66-5.66-1.42 1.42M7.76 16.24l-1.42 1.42m11.32 0-1.42-1.42M7.76 7.76 6.34 6.34",
     refresh: "M20 6v5h-5M4 18v-5h5m9.5-4A7 7 0 0 0 6.2 7.7M5.5 15A7 7 0 0 0 17.8 16.3",
-    chevron: "m9 18 6-6-6-6"
+    chevron: "m9 18 6-6-6-6",
+    download: "M12 3v11m0 0 4-4m-4 4-4-4M5 19h14",
+    menu: "M4 7h16M4 12h16M4 17h16"
   };
 
   return (
@@ -80,6 +84,11 @@ function Icon({ name }: { name: "overview" | "cash" | "users" | "box" | "moves" 
 function Sidebar() {
   return (
     <aside className="sidebar">
+      <details className="mobile-menu">
+        <summary><Icon name="menu" /> Menü</summary>
+        <a className="side-link active" href="#customers"><Icon name="users" /> Müşteriler</a>
+        <a className="side-link" href="#products"><Icon name="box" /> Ürünler</a>
+      </details>
       <div className="brand">
         <div className="brand-logo">
           <img src="/matadors-logo.jpg" alt="Matadors logo" />
@@ -141,7 +150,7 @@ export default async function Page({ searchParams }: { searchParams?: { branch?:
 
   const selectedBranch = searchParams?.branch || "";
   const data = await loadPanelData(selectedBranch);
-  const activeBranchLabel = selectedBranch ? branchLabel(selectedBranch) : "Tüm Kasalar";
+  const activeBranchLabel = data.selectedBranch ? branchLabel(data.selectedBranch) : "Tüm Kasalar";
   const visibleBalances = data.balances.slice(0, 10);
   const visibleStock = data.stock.slice(0, 10);
 
@@ -157,8 +166,8 @@ export default async function Page({ searchParams }: { searchParams?: { branch?:
             <small>{activeBranchLabel} için son güncelleme: {dateText(data.summary.updatedAt)}</small>
           </div>
           <div className="topbar-actions">
-            <BranchFilter branches={data.branches} selected={selectedBranch} />
-            <a className="button button-secondary" href={selectedBranch ? `/?branch=${encodeURIComponent(selectedBranch)}` : "/"}>
+            <BranchFilter branches={data.branches} selected={data.selectedBranch} />
+            <a className="button button-secondary" href={data.selectedBranch ? `/?branch=${encodeURIComponent(data.selectedBranch)}` : "/"}>
               <Icon name="refresh" />
               Yenile
             </a>
@@ -181,6 +190,12 @@ export default async function Page({ searchParams }: { searchParams?: { branch?:
 
         <section className="panel-grid primary-panels">
           <article id="customers" className="panel data-panel">
+            <div className="panel-action-strip">
+              <a className="button button-primary" href={`/api/customers/pdf${data.selectedBranch ? `?branch=${encodeURIComponent(data.selectedBranch)}` : ""}`}>
+                <Icon name="download" />
+                PDF İndir
+              </a>
+            </div>
             <div className="panel-heading">
               <div className="panel-title">
                 <span className="panel-icon blue"><Icon name="users" /></span>
@@ -195,9 +210,9 @@ export default async function Page({ searchParams }: { searchParams?: { branch?:
                   {visibleBalances.length === 0 && <tr><td className="empty" colSpan={3}>Kayıt yok</td></tr>}
                   {visibleBalances.map((customer) => (
                     <tr key={`${customer.branch}-${customer.name}`}>
-                      <td className="strong-cell">{customer.name}</td>
-                      <td>{branchLabel(customer.branch || "genel-kasa")}</td>
-                      <td className={`numeric ${balanceClass(customer.balance)}`}>{money(customer.balance)}</td>
+                      <td data-label="Müşteri" className="strong-cell">{customer.name}</td>
+                      <td data-label="Kasa">{branchLabel(customer.branch || "genel-kasa")}</td>
+                      <td data-label="Bakiye" className={`numeric ${balanceClass(customer.balance)}`}>{money(customer.balance)}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -224,10 +239,10 @@ export default async function Page({ searchParams }: { searchParams?: { branch?:
                   {visibleStock.length === 0 && <tr><td className="empty" colSpan={4}>Kayıt yok</td></tr>}
                   {visibleStock.map((product) => (
                     <tr key={`${product.branch}-${product.name}`}>
-                      <td className="strong-cell">{product.name}</td>
-                      <td>{branchLabel(product.branch || "genel-kasa")}</td>
-                      <td className="numeric">{numberText(product.stock)}</td>
-                      <td className="numeric">{money(product.price)}</td>
+                      <td data-label="Ürün" className="strong-cell">{product.name}</td>
+                      <td data-label="Kasa">{branchLabel(product.branch || "genel-kasa")}</td>
+                      <td data-label="Stok" className="numeric">{numberText(product.stock)}</td>
+                      <td data-label="Fiyat" className="numeric">{money(product.price)}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -238,6 +253,10 @@ export default async function Page({ searchParams }: { searchParams?: { branch?:
               <Pager total={data.stock.length} pageSize={10} />
             </footer>
           </article>
+        </section>
+
+        <section className="panel-grid stock-action-section">
+          <ProductTools branch={data.selectedBranch} products={data.stock} />
         </section>
 
         <section id="branches" className="mini-grid">
