@@ -35,7 +35,14 @@ export async function GET(request: NextRequest) {
       sales: [],
       balances: [],
       stock: [],
-      byBranch: []
+      byBranch: [],
+      debug: {
+        apiCustomers: 0,
+        apiProducts: 0,
+        apiSales: 0,
+        filteredCustomers: 0,
+        filteredProducts: 0
+      }
     }, { headers: { "Cache-Control": "no-store" } });
   }
 }

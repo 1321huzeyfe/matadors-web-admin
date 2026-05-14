@@ -21,6 +21,13 @@ export type PanelData = {
   balances: Array<{ name: string; branch: string; balance: number }>;
   stock: Array<{ id: string; name: string; category: string; branch: string; stock: number; price: number }>;
   byBranch: Array<{ branch: string; todayTotal: number; saleCount: number; customerCount: number; productCount: number; userCount: number }>;
+  debug: {
+    apiCustomers: number;
+    apiProducts: number;
+    apiSales: number;
+    filteredCustomers: number;
+    filteredProducts: number;
+  };
 };
 
 const TABLES = ["users", "customers", "products", "sales"] as const;
@@ -81,12 +88,17 @@ export function branchOf(row: Row): string {
   return first(row, BRANCH_KEYS);
 }
 
-function branchKey(row: Row): string {
-  return normalizeBranch(branchOf(row));
+function branchCandidates(row: Row): string[] {
+  const keys = [...BRANCH_KEYS, ...EXTRA_BRANCH_KEYS];
+  const values = keys
+    .map((key) => first(row, [key], "").trim())
+    .filter(Boolean);
+  return Array.from(new Set(values));
 }
 
 export function fallbackBranch(row: Row): string {
-  return branchOf(row) || first(row, EXTRA_BRANCH_KEYS, "genel-kasa");
+  const candidates = branchCandidates(row);
+  return candidates.find((candidate) => !isAdminLikeBranch(candidate)) || candidates[0] || "genel-kasa";
 }
 
 function saleTotal(row: Row): number {
@@ -153,17 +165,17 @@ function realScope(users: Row[], dataRows: Row[]) {
   const branches = new Set<string>();
 
   for (const row of users.filter(isCashierUser)) {
-    const branch = fallbackBranch(row).trim();
-    if (branch && !isAdminLikeBranch(branch)) branches.add(branch);
+    for (const branch of branchCandidates(row)) {
+      if (branch && !isAdminLikeBranch(branch)) branches.add(branch);
+    }
   }
 
   for (const row of dataRows.filter(isActive)) {
-    const branch = fallbackBranch(row).trim();
+    const candidates = branchCandidates(row).filter((branch) => branch && !isAdminLikeBranch(branch));
     const id = actorId(row);
-    if (!branch || isAdminLikeBranch(branch)) continue;
+    if (candidates.length === 0) continue;
     if (id && adminIds.has(id)) continue;
-    if (id && cashierIds.size > 0 && !cashierIds.has(id) && /^\d+$/.test(branch)) continue;
-    branches.add(branch);
+    for (const branch of candidates) branches.add(branch);
   }
 
   return { branches, cashierIds, adminIds };
@@ -172,9 +184,8 @@ function realScope(users: Row[], dataRows: Row[]) {
 function isRealBranchRow(row: Row, scope: ReturnType<typeof realScope>): boolean {
   const branch = fallbackBranch(row).trim();
   const id = actorId(row);
-  if (!branch || isAdminLikeBranch(branch)) return false;
   if (id && scope.adminIds.has(id)) return false;
-  if (scope.branches.has(branch)) return true;
+  if (branchCandidates(row).some((candidate) => scope.branches.has(candidate) && !isAdminLikeBranch(candidate))) return true;
   return Boolean(id && scope.cashierIds.has(id));
 }
 
@@ -185,7 +196,7 @@ function filterRealBranches(rows: Row[], scope: ReturnType<typeof realScope>): R
 function filterBranch(rows: Row[], selectedBranch: string): Row[] {
   const selected = normalizeBranch(selectedBranch);
   if (!selected) return rows;
-  return rows.filter((row) => branchKey(row) === selected || normalizeBranch(fallbackBranch(row)) === selected);
+  return rows.filter((row) => branchCandidates(row).some((candidate) => normalizeBranch(candidate) === selected));
 }
 
 function ensureBranch(map: Map<string, PanelData["byBranch"][number]>, branch: string) {
@@ -294,7 +305,14 @@ export async function loadPanelData(selectedBranch = ""): Promise<PanelData> {
     })).sort((a, b) => a.name.localeCompare(b.name, "tr")).slice(0, 200),
     byBranch: Array.from(byBranchMap.values())
       .filter((item) => !effectiveBranch || normalizeBranch(item.branch) === normalizeBranch(effectiveBranch))
-      .sort((a, b) => a.branch.localeCompare(b.branch, "tr"))
+      .sort((a, b) => a.branch.localeCompare(b.branch, "tr")),
+    debug: {
+      apiCustomers: customersResult.rows.length,
+      apiProducts: productsResult.rows.length,
+      apiSales: salesResult.rows.length,
+      filteredCustomers: customers.length,
+      filteredProducts: products.length
+    }
   };
 }
 

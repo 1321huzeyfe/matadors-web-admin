@@ -78,7 +78,7 @@ function todayKey() {
 }
 
 function rowBranch(row: Row, selectedBranch = "") {
-  return branchLabel(
+  return (
     branchOf(row)
       || first(row, ["cashier_id", "device_id", "user_id", "cashier", "kasa", "branch", "profile"], "")
       || selectedBranch
@@ -200,6 +200,11 @@ export default async function Page({ searchParams }: { searchParams?: { branch?:
   const activeBranchLabel = pageActiveBranchLabel;
   const visibleBalances = filteredBalances.slice(0, 10);
   const visibleStock = filteredStock.slice(0, 10);
+  const debug = {
+    ...data.debug,
+    filteredCustomers: filteredBalances.length,
+    filteredProducts: filteredStock.length
+  };
 
   return (
     <div className="admin-layout">
@@ -222,6 +227,10 @@ export default async function Page({ searchParams }: { searchParams?: { branch?:
             <LogoutButton />
           </div>
         </header>
+
+        <section className="debug-strip">
+          API customers: {numberText(debug.apiCustomers)}, products: {numberText(debug.apiProducts)}, sales: {numberText(debug.apiSales)}, filtered customers: {numberText(debug.filteredCustomers)}, filtered products: {numberText(debug.filteredProducts)}
+        </section>
 
         {data.errors.length > 0 && (
           <section className="error-box">

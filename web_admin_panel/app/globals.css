@@ -790,6 +790,17 @@ tbody tr:hover {
   padding: 13px 16px;
 }
 
+.debug-strip {
+  background: #eef6ff;
+  border: 1px solid #cfe4ff;
+  border-radius: 8px;
+  color: #1e3a5f;
+  font-size: 12px;
+  font-weight: 800;
+  margin-bottom: 18px;
+  padding: 8px 12px;
+}
+
 .login-shell {
   align-items: center;
   animation: fadeIn 0.28s ease both;
