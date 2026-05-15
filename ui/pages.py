@@ -15,6 +15,7 @@ from services.pdf_fonts import get_pdf_fonts
 from performance import measure
 from ui.shortcuts import bind_ctrl_shortcut, bind_enter_action
 from ui.styles import BLACK_BUTTON, BLACK_BUTTON_HOVER, BUTTON_SIZE_PRESETS, MATADORS_THEME, SIDEBAR_MUTED, SIDEBAR_TEXT
+from db.auth import InactiveUserError
 CTK_AVAILABLE = True
 
 # ENSURE ctk is available globally for ALL modules
@@ -76,6 +77,30 @@ def _style_glass_toplevel(window, t, opacity=0.95):
         window.wm_attributes("-alpha", float(t.get("dialog_opacity", opacity)))
     except Exception:
         pass
+
+
+def _cashier_is_active(cashier: dict) -> bool:
+    return not bool(cashier.get("archived")) and cashier.get("is_active", 1) not in (0, False)
+
+
+def _run_ui_background(widget, app, name: str, work, on_success, error_title: str = "Hata"):
+    def safe_work():
+        try:
+            return True, work()
+        except Exception as exc:
+            return False, str(exc)
+
+    def finish(result):
+        ok, payload = result
+        if ok:
+            on_success(payload)
+        else:
+            messagebox.showerror(error_title, str(payload), parent=widget)
+
+    if hasattr(app, "run_background_io"):
+        app.run_background_io(name, safe_work, finish, lambda exc: messagebox.showerror(error_title, str(exc), parent=widget))
+    else:
+        finish(safe_work())
 
 def _apply_vip_background(frame, app):
     """VIP arka plan resmini frame'e yerleştirir."""
@@ -150,7 +175,11 @@ class LoginFrame(ctk.CTkFrame):
         bind_enter_action(self, self.login, "Giriş")
 
     def login(self):
-        user = self.app.db.authenticate(self.username.get(), self.password.get())
+        try:
+            user = self.app.db.authenticate(self.username.get(), self.password.get())
+        except InactiveUserError:
+            messagebox.showerror("Hata", "Bu kasa pasif. Yönetici ile iletişime geçin.")
+            return
         if not user:
             messagebox.showerror("Hata", "Kullanıcı adı veya şifre hatalı.")
             return
@@ -379,6 +408,10 @@ class HomePage(ctk.CTkFrame):
         self._products_dirty = True
         self._categories_dirty = True
         self._last_products_key = None
+        self._refreshing_products = False
+        self._pending_product_refresh = False
+        self._product_stock_labels = {}
+        self._sale_in_progress = False
         saved_cart_width = int(self.app.db.get_setting("cart_panel_width", "420") or 420)
         self.cart_width = ctk.IntVar(value=max(280, min(760, saved_cart_width)))
         self.category_var = ctk.StringVar(value="Tüm Ürünler")
@@ -392,7 +425,7 @@ class HomePage(ctk.CTkFrame):
             values=["Tüm Ürünler"],
             variable=self.category_var,
             width=200,
-            command=lambda _v: self.refresh_products(),
+            command=lambda _v: self.schedule_product_refresh(80),
             **_entry_kwargs(t),
         )
         self.cat.pack(side="left")
@@ -487,16 +520,19 @@ class HomePage(ctk.CTkFrame):
 
     @measure("dashboard_render_suresi", lambda self: "HomePage.on_show")
     def on_show(self):
-        cashier_id = self.user["id"] if not self.is_admin else None
-        if self._categories_dirty:
-            cats = self.db.get_product_categories(cashier_id=cashier_id)
-            self.cat.configure(values=cats)
-            if self.category_var.get() not in cats:
-                self.category_var.set("Tüm Ürünler")
-            self._categories_dirty = False
-        if self._products_dirty:
-            self.refresh_products()
-        self._refresh_cart_ui()
+        try:
+            cashier_id = self.user["id"] if not self.is_admin else None
+            if self._categories_dirty:
+                cats = self.db.get_product_categories(cashier_id=cashier_id)
+                self.cat.configure(values=cats)
+                if self.category_var.get() not in cats:
+                    self.category_var.set("Tüm Ürünler")
+                self._categories_dirty = False
+            if self._products_dirty:
+                self.refresh_products()
+            self._refresh_cart_ui()
+        except Exception as exc:
+            print(f"HomePage on_show skipped: {exc}")
 
     def _visible_items(self):
         return [x for x in self.cart.values() if x.get("quantity", 0) > 0]
@@ -506,83 +542,106 @@ class HomePage(ctk.CTkFrame):
 
     @measure("urun_arama_suresi", lambda self: f"category={self.category_var.get() if hasattr(self, 'category_var') else ''}")
     def refresh_products(self):
-        t = self.app.theme
-        for w in self.grid_frame.winfo_children():
-            w.destroy()
-
-        cashier_id = self.user["id"] if not self.is_admin else None
-        category = self.category_var.get()
-        products = self.db.list_products(category, cashier_id=cashier_id)
-        self._last_products_key = (category, cashier_id)
-        self._products_dirty = False
-
-        columns = self._product_columns()
-        self._last_product_columns = columns
-        for i in range(6):
-            self.grid_frame.columnconfigure(i, weight=0)
-        for i in range(int(columns)):
-            self.grid_frame.columnconfigure(i, weight=1, uniform="product_card")
-
-        if not products:
-            empty = ctk.CTkFrame(self.grid_frame, fg_color=t["panel"], corner_radius=14, border_width=1, border_color=t["border"])
-            empty.grid(row=0, column=0, sticky="ew", padx=10, pady=10)
-            ctk.CTkLabel(empty, text="Ürün bulunamadı", text_color=t["muted"], font=ctk.CTkFont(size=14)).pack(padx=18, pady=18)
+        if self._refreshing_products:
+            self._pending_product_refresh = True
             return
+        self._refreshing_products = True
+        t = self.app.theme
+        try:
+            for w in self.grid_frame.winfo_children():
+                w.destroy()
+            self._product_stock_labels = {}
 
-        for i, p in enumerate(products):
-            icon = p.get("icon", "") or self._get_product_icon(p["name"], p["category"])
-            is_featured = i == 0
-            card = ctk.CTkFrame(
-                self.grid_frame,
-                fg_color=t["card"],
-                corner_radius=14,
-                width=190,
-                height=152,
-                border_width=2 if is_featured else 1,
-                border_color=t["accent"] if is_featured else t["border"],
-            )
-            card.grid(row=i // columns, column=i % columns, padx=10, pady=10, sticky="nsew")
-            card.grid_propagate(False)
-            card.bind("<Button-1>", lambda _e, pr=p: self._add(pr))
-            card.bind("<Enter>", lambda _e, c=card, featured=is_featured: self._set_product_hover(c, True, featured))
-            card.bind("<Leave>", lambda _e, c=card, featured=is_featured: self._set_product_hover(c, False, featured))
+            cashier_id = self.user["id"] if not self.is_admin else None
+            category = self.category_var.get()
+            products = self.db.list_products(category, cashier_id=cashier_id)
+            self._last_products_key = (category, cashier_id)
+            self._products_dirty = False
 
-            content = ctk.CTkFrame(card, fg_color="transparent")
-            content.pack(fill="both", expand=True, padx=14, pady=12)
-            content.bind("<Button-1>", lambda _e, pr=p: self._add(pr))
+            columns = self._product_columns()
+            self._last_product_columns = columns
+            for i in range(6):
+                self.grid_frame.columnconfigure(i, weight=0)
+            for i in range(int(columns)):
+                self.grid_frame.columnconfigure(i, weight=1, uniform="product_card")
 
-            top_row = ctk.CTkFrame(content, fg_color="transparent")
-            top_row.pack(fill="x")
-            icon_lbl = ctk.CTkLabel(top_row, text=icon, font=ctk.CTkFont(size=30), text_color=t["text"])
-            icon_lbl.pack(side="left")
-            icon_lbl.bind("<Button-1>", lambda _e, pr=p: self._add(pr))
-            stock_lbl = ctk.CTkLabel(
-                top_row,
-                text=f"Stok {int(p['stock'])}",
-                font=ctk.CTkFont(size=11, weight="bold"),
-                text_color=t["muted"],
-                fg_color=t["panel2"],
-                corner_radius=8,
-            )
-            stock_lbl.pack(side="right", ipadx=8, ipady=3)
-            stock_lbl.bind("<Button-1>", lambda _e, pr=p: self._add(pr))
+            if not products:
+                empty = ctk.CTkFrame(self.grid_frame, fg_color=t["panel"], corner_radius=14, border_width=1, border_color=t["border"])
+                empty.grid(row=0, column=0, sticky="ew", padx=10, pady=10)
+                ctk.CTkLabel(empty, text="Ürün bulunamadı", text_color=t["muted"], font=ctk.CTkFont(size=14)).pack(padx=18, pady=18)
+                return
 
-            name = p['name'][:30] + "..." if len(p['name']) > 30 else p['name']
-            name_lbl = ctk.CTkLabel(content, text=name, font=ctk.CTkFont(size=14, weight="bold"), text_color=t["text"], anchor="w", justify="left", wraplength=150)
-            name_lbl.pack(fill="x", pady=(10, 2))
-            name_lbl.bind("<Button-1>", lambda _e, pr=p: self._add(pr))
-            cat_lbl = ctk.CTkLabel(content, text=p.get("category", ""), font=ctk.CTkFont(size=11), text_color=t["muted"], anchor="w")
-            cat_lbl.pack(fill="x")
-            cat_lbl.bind("<Button-1>", lambda _e, pr=p: self._add(pr))
+            for i, p in enumerate(products):
+                icon = p.get("icon", "") or self._get_product_icon(p["name"], p["category"])
+                is_featured = i == 0
+                card = ctk.CTkFrame(
+                    self.grid_frame,
+                    fg_color=t["card"],
+                    corner_radius=14,
+                    width=190,
+                    height=152,
+                    border_width=2 if is_featured else 1,
+                    border_color=t["accent"] if is_featured else t["border"],
+                )
+                card.grid(row=i // columns, column=i % columns, padx=10, pady=10, sticky="nsew")
+                card.grid_propagate(False)
+                card.bind("<Button-1>", lambda _e, pr=p: self._add(pr))
+                card.bind("<Enter>", lambda _e, c=card, featured=is_featured: self._set_product_hover(c, True, featured))
+                card.bind("<Leave>", lambda _e, c=card, featured=is_featured: self._set_product_hover(c, False, featured))
 
-            bottom = ctk.CTkFrame(content, fg_color="transparent")
-            bottom.pack(fill="x", side="bottom")
-            price_lbl = ctk.CTkLabel(bottom, text=money(p['price']), font=ctk.CTkFont(size=14, weight="bold"), text_color=t["accent"])
-            price_lbl.pack(side="left")
-            price_lbl.bind("<Button-1>", lambda _e, pr=p: self._add(pr))
-            for child in (content, top_row, icon_lbl, stock_lbl, name_lbl, cat_lbl, bottom, price_lbl):
-                child.bind("<Enter>", lambda _e, c=card, featured=is_featured: self._set_product_hover(c, True, featured))
-                child.bind("<Leave>", lambda _e, c=card, featured=is_featured: self._set_product_hover(c, False, featured))
+                content = ctk.CTkFrame(card, fg_color="transparent")
+                content.pack(fill="both", expand=True, padx=14, pady=12)
+                content.bind("<Button-1>", lambda _e, pr=p: self._add(pr))
+
+                top_row = ctk.CTkFrame(content, fg_color="transparent")
+                top_row.pack(fill="x")
+                icon_lbl = ctk.CTkLabel(top_row, text=icon, font=ctk.CTkFont(size=30), text_color=t["text"])
+                icon_lbl.pack(side="left")
+                icon_lbl.bind("<Button-1>", lambda _e, pr=p: self._add(pr))
+                stock_lbl = ctk.CTkLabel(
+                    top_row,
+                    text=f"Stok {int(p['stock'])}",
+                    font=ctk.CTkFont(size=11, weight="bold"),
+                    text_color=t["muted"],
+                    fg_color=t["panel2"],
+                    corner_radius=8,
+                )
+                stock_lbl.pack(side="right", ipadx=8, ipady=3)
+                stock_lbl.bind("<Button-1>", lambda _e, pr=p: self._add(pr))
+                self._product_stock_labels[int(p["id"])] = stock_lbl
+
+                name = p['name'][:30] + "..." if len(p['name']) > 30 else p['name']
+                name_lbl = ctk.CTkLabel(content, text=name, font=ctk.CTkFont(size=14, weight="bold"), text_color=t["text"], anchor="w", justify="left", wraplength=150)
+                name_lbl.pack(fill="x", pady=(10, 2))
+                name_lbl.bind("<Button-1>", lambda _e, pr=p: self._add(pr))
+                cat_lbl = ctk.CTkLabel(content, text=p.get("category", ""), font=ctk.CTkFont(size=11), text_color=t["muted"], anchor="w")
+                cat_lbl.pack(fill="x")
+                cat_lbl.bind("<Button-1>", lambda _e, pr=p: self._add(pr))
+
+                bottom = ctk.CTkFrame(content, fg_color="transparent")
+                bottom.pack(fill="x", side="bottom")
+                price_lbl = ctk.CTkLabel(bottom, text=money(p['price']), font=ctk.CTkFont(size=14, weight="bold"), text_color=t["accent"])
+                price_lbl.pack(side="left")
+                price_lbl.bind("<Button-1>", lambda _e, pr=p: self._add(pr))
+                for child in (content, top_row, icon_lbl, stock_lbl, name_lbl, cat_lbl, bottom, price_lbl):
+                    child.bind("<Enter>", lambda _e, c=card, featured=is_featured: self._set_product_hover(c, True, featured))
+                    child.bind("<Leave>", lambda _e, c=card, featured=is_featured: self._set_product_hover(c, False, featured))
+        except Exception as exc:
+            print(f"Product refresh failed: {exc}")
+        finally:
+            self._refreshing_products = False
+            if self._pending_product_refresh:
+                self._pending_product_refresh = False
+                self.schedule_product_refresh(120)
+
+    def schedule_product_refresh(self, delay_ms: int = 180):
+        self._products_dirty = True
+        if self._resize_refresh_job:
+            try:
+                self.after_cancel(self._resize_refresh_job)
+            except Exception:
+                pass
+        self._resize_refresh_job = self.after(delay_ms, self.refresh_products)
 
     def _set_product_hover(self, card, active: bool, featured: bool = False):
         t = self.app.theme
@@ -885,6 +944,10 @@ class HomePage(ctk.CTkFrame):
 
     @measure("satis_kayit_suresi", lambda self, method, customer=None, force_limit=False: f"ui_finalize method={method} items={len(self._visible_items()) if hasattr(self, 'cart') else 0}")
     def _finalize(self, method: str, customer: dict | None = None, force_limit: bool = False):
+        if self._sale_in_progress:
+            return
+        self._sale_in_progress = True
+        self.status_var.set("Satış kaydediliyor...")
         try:
             sale_id, total, rem = self.db.create_sale(
                 customer["id"] if customer else None,
@@ -897,14 +960,22 @@ class HomePage(ctk.CTkFrame):
         except ValueError as e:
             if str(e) == "LIMIT_CONFIRM_REQUIRED" and customer:
                 if messagebox.askyesno("Onay", "Limit aşılıyor. Devam edilsin mi?"):
+                    self._sale_in_progress = False
                     return self._finalize(method, customer, True)
+                self._sale_in_progress = False
                 return
             messagebox.showerror("Hata", str(e))
+            self._sale_in_progress = False
+            return
+        except Exception as exc:
+            messagebox.showerror("Hata", str(exc))
+            self._sale_in_progress = False
             return
 
         # Clear cart immediately after successful payment
+        sold_items = list(self._visible_items())
         self._clear()
-        self.refresh_products()
+        self._apply_sold_stock_delta(sold_items)
         
         # Show success message
         self.status_var.set(f"Satış #{sale_id} tamamlandı — {money(total)}")
@@ -923,6 +994,22 @@ class HomePage(ctk.CTkFrame):
         # Show remaining balance for defter payments
         if customer and rem is not None:
             messagebox.showinfo("Defter", f"Kalan bakiye: {money(rem)}")
+        self._sale_in_progress = False
+
+    def _apply_sold_stock_delta(self, sold_items: list[dict]):
+        """Update visible stock labels without rebuilding the whole product grid."""
+        for item in sold_items:
+            try:
+                product_id = int(item.get("product_id") or 0)
+                label = self._product_stock_labels.get(product_id)
+                if not label:
+                    continue
+                current = str(label.cget("text") or "")
+                current_stock = int(float(current.replace("Stok", "").strip() or 0))
+                next_stock = max(0, current_stock - int(float(item.get("quantity", 0) or 0)))
+                label.configure(text=f"Stok {next_stock}")
+            except Exception as exc:
+                print(f"Stock label update skipped: {exc}")
 
     def _open_product_settings(self):
         """Open product management for cashier users."""
@@ -972,6 +1059,8 @@ class LedgerPage(ctk.CTkFrame):
             f"{row['full_name']} (@{row['username']})": row for row in self.admin_cashiers
         }
         self.admin_selected_cashier = None
+        self._rendering_cards = False
+        self._pending_render_cards = False
 
         head = ctk.CTkFrame(self, fg_color=t["panel"], corner_radius=12, border_width=1, border_color=t["border"])
         head.pack(fill="x", padx=20, pady=(16, 8))
@@ -988,7 +1077,8 @@ class LedgerPage(ctk.CTkFrame):
         row.pack(fill="x", padx=20, pady=6)
         self.search = ctk.CTkEntry(row, placeholder_text="Müşteri ara...", width=360, **_entry_kwargs(t))
         self.search.pack(side="left", padx=(0, 12))
-        self.search.bind("<KeyRelease>", lambda _e: self.render_cards())
+        self._search_after_id = None
+        self.search.bind("<KeyRelease>", lambda _e: self._schedule_render_cards())
         ctk.CTkButton(row, text="Yeni Müşteri", fg_color=t["accent"], hover_color=t["accent_hover"], command=self._new_customer).pack(side="left", padx=4)
         self.show_archived = ctk.BooleanVar(value=False)
         if self.is_admin:
@@ -1033,10 +1123,24 @@ class LedgerPage(ctk.CTkFrame):
     def _write_current_cashier_files(self):
         _, username = self._active_cashier_context()
         if username:
-            try:
+            def work():
                 self.app.export_cashier_files(username)
-            except Exception as exc:
-                print(f"Kasa JSON yazma hatası: {exc}")
+
+            if hasattr(self.app, "run_background_io"):
+                self.app.run_background_io("cashier_json_export", work)
+            else:
+                try:
+                    work()
+                except Exception as exc:
+                    print(f"Kasa JSON yazma hatası: {exc}")
+
+    def _schedule_render_cards(self):
+        if self._search_after_id:
+            try:
+                self.after_cancel(self._search_after_id)
+            except Exception:
+                pass
+        self._search_after_id = self.after(180, self.render_cards)
 
     @measure("dashboard_render_suresi", lambda self: "LedgerPage.on_show")
     def on_show(self):
@@ -1063,18 +1167,22 @@ class LedgerPage(ctk.CTkFrame):
         )
 
     def _pdf_today(self):
-        try:
-            cashier_id, _username = self._active_cashier_context()
+        cashier_id, _username = self._active_cashier_context()
+
+        def work():
             outputs = self.app.create_customer_activity_archives(datetime.now().strftime("%Y-%m-%d"), cashier_id)
-            daily = outputs[0]
+            return outputs[0]
+
+        def done(daily):
             messagebox.showinfo(
                 "Müşteri İşlem Kaydı",
                 "Günlük, haftalık ve aylık müşteri işlem PDF raporları oluşturuldu.\n\n"
                 f"Günlük PDF:\n{daily['pdf']}"
                 "\nPDF klasörü: Masaüstü/MatadorsApp_Raporlar",
+                parent=self,
             )
-        except Exception as e:
-            messagebox.showerror("Hata", f"Müşteri işlem kaydı oluşturulurken hata:\n{e}")
+
+        _run_ui_background(self, self.app, "customer_activity_pdf", work, done, "Hata")
 
     def _open_customer_balance_status(self):
         cashier_id, username = self._active_cashier_context()
@@ -1085,45 +1193,57 @@ class LedgerPage(ctk.CTkFrame):
 
     @measure("dashboard_render_suresi", lambda self: "LedgerPage.render_cards")
     def render_cards(self):
+        if self._rendering_cards:
+            self._pending_render_cards = True
+            return
+        self._rendering_cards = True
         t = self.app.theme
-        for w in self.scroll.winfo_children():
-            w.destroy()
-        cashier_id, username = self._active_cashier_context()
-        if self.is_admin and not username:
-            empty = ctk.CTkFrame(self.scroll, fg_color=t["panel"], corner_radius=12, border_width=1, border_color=t["border"])
-            empty.pack(fill="x", pady=8)
-            ctk.CTkLabel(empty, text="Önce bir kasa seçin", text_color=t["muted"], font=ctk.CTkFont(size=14)).pack(padx=18, pady=18)
-            return
-        include_archived = bool(self.is_admin and self.show_archived.get())
-        customers = self.db.list_customers(self.search.get(), cashier_id=cashier_id, include_archived=include_archived)
-        if not customers:
-            empty = ctk.CTkFrame(self.scroll, fg_color=t["panel"], corner_radius=12, border_width=1, border_color=t["border"])
-            empty.pack(fill="x", pady=8)
-            ctk.CTkLabel(empty, text="Müşteri bulunamadı", text_color=t["muted"], font=ctk.CTkFont(size=14)).pack(padx=18, pady=18)
-            return
-        for c in customers:
-            balance = float(c.get("balance", 0))
-            limit = float(c.get("credit_limit", 0))
-            status_color = t["success"] if balance >= 0 and balance >= limit else t["danger"]
-            card = ctk.CTkFrame(self.scroll, fg_color=t["panel"], corner_radius=12, border_width=1, border_color=t["border"])
-            card.pack(fill="x", pady=7)
-            left = ctk.CTkFrame(card, fg_color="transparent")
-            left.pack(side="left", fill="both", expand=True, padx=14, pady=12)
-            ctk.CTkFrame(left, fg_color=status_color, width=4, corner_radius=2).pack(side="left", fill="y", padx=(0, 12))
-            av = ctk.CTkLabel(left, text=(c.get("avatar") or c["name"][:2]).upper()[:2], width=48, height=48, fg_color="#111111", text_color="#FFFFFF", corner_radius=24, font=ctk.CTkFont(size=18, weight="bold"))
-            av.pack(side="left", padx=(0, 12))
-            txt = ctk.CTkFrame(left, fg_color="transparent")
-            txt.pack(side="left", fill="x", expand=True)
-            ctk.CTkLabel(txt, text=c["name"], font=ctk.CTkFont(size=17, weight="bold"), text_color=t["text"]).pack(anchor="w")
-            ctk.CTkLabel(txt, text=f"Bakiye: {money(balance)} | Limit: {money(limit)}", text_color=status_color, font=ctk.CTkFont(size=14, weight="bold")).pack(anchor="w")
-            ctk.CTkLabel(txt, text=c.get("note") or c.get("phone") or "", text_color=t["muted"], font=ctk.CTkFont(size=12)).pack(anchor="w")
-            btns = ctk.CTkFrame(card, fg_color="transparent")
-            btns.pack(side="right", padx=12, pady=12)
-            ctk.CTkButton(btns, text="Düzenle", width=96, fg_color=t["panel2"], text_color=t["text"], command=lambda row=c: self._edit(row)).pack(side="left", padx=4)
-            ctk.CTkButton(btns, text="Bakiye", width=96, fg_color=t["accent"], hover_color=t["accent_hover"], command=lambda row=c: self._set_bal(row)).pack(side="left", padx=4)
-            ctk.CTkButton(btns, text="Hareket", width=96, fg_color="#111111", hover_color="#2b2b2b", command=lambda row=c: self._hist(row)).pack(side="left", padx=4)
-            if self.is_admin:
-                ctk.CTkButton(btns, text="Sil", width=70, fg_color=t["danger"], command=lambda row=c: self._delete(row)).pack(side="left", padx=4)
+        try:
+            for w in self.scroll.winfo_children():
+                w.destroy()
+            cashier_id, username = self._active_cashier_context()
+            if self.is_admin and not username:
+                empty = ctk.CTkFrame(self.scroll, fg_color=t["panel"], corner_radius=12, border_width=1, border_color=t["border"])
+                empty.pack(fill="x", pady=8)
+                ctk.CTkLabel(empty, text="Önce bir kasa seçin", text_color=t["muted"], font=ctk.CTkFont(size=14)).pack(padx=18, pady=18)
+                return
+            include_archived = bool(self.is_admin and self.show_archived.get())
+            customers = self.db.list_customers(self.search.get(), cashier_id=cashier_id, include_archived=include_archived)
+            if not customers:
+                empty = ctk.CTkFrame(self.scroll, fg_color=t["panel"], corner_radius=12, border_width=1, border_color=t["border"])
+                empty.pack(fill="x", pady=8)
+                ctk.CTkLabel(empty, text="Müşteri bulunamadı", text_color=t["muted"], font=ctk.CTkFont(size=14)).pack(padx=18, pady=18)
+                return
+            for c in customers:
+                balance = float(c.get("balance", 0))
+                limit = float(c.get("credit_limit", 0))
+                status_color = t["success"] if balance >= 0 and balance >= limit else t["danger"]
+                card = ctk.CTkFrame(self.scroll, fg_color=t["panel"], corner_radius=12, border_width=1, border_color=t["border"])
+                card.pack(fill="x", pady=7)
+                left = ctk.CTkFrame(card, fg_color="transparent")
+                left.pack(side="left", fill="both", expand=True, padx=14, pady=12)
+                ctk.CTkFrame(left, fg_color=status_color, width=4, corner_radius=2).pack(side="left", fill="y", padx=(0, 12))
+                av = ctk.CTkLabel(left, text=(c.get("avatar") or c["name"][:2]).upper()[:2], width=48, height=48, fg_color="#111111", text_color="#FFFFFF", corner_radius=24, font=ctk.CTkFont(size=18, weight="bold"))
+                av.pack(side="left", padx=(0, 12))
+                txt = ctk.CTkFrame(left, fg_color="transparent")
+                txt.pack(side="left", fill="x", expand=True)
+                ctk.CTkLabel(txt, text=c["name"], font=ctk.CTkFont(size=17, weight="bold"), text_color=t["text"]).pack(anchor="w")
+                ctk.CTkLabel(txt, text=f"Bakiye: {money(balance)} | Limit: {money(limit)}", text_color=status_color, font=ctk.CTkFont(size=14, weight="bold")).pack(anchor="w")
+                ctk.CTkLabel(txt, text=c.get("note") or c.get("phone") or "", text_color=t["muted"], font=ctk.CTkFont(size=12)).pack(anchor="w")
+                btns = ctk.CTkFrame(card, fg_color="transparent")
+                btns.pack(side="right", padx=12, pady=12)
+                ctk.CTkButton(btns, text="Düzenle", width=96, fg_color=t["panel2"], text_color=t["text"], command=lambda row=c: self._edit(row)).pack(side="left", padx=4)
+                ctk.CTkButton(btns, text="Bakiye", width=96, fg_color=t["accent"], hover_color=t["accent_hover"], command=lambda row=c: self._set_bal(row)).pack(side="left", padx=4)
+                ctk.CTkButton(btns, text="Hareket", width=96, fg_color="#111111", hover_color="#2b2b2b", command=lambda row=c: self._hist(row)).pack(side="left", padx=4)
+                if self.is_admin:
+                    ctk.CTkButton(btns, text="Sil", width=70, fg_color=t["danger"], command=lambda row=c: self._delete(row)).pack(side="left", padx=4)
+        except Exception as exc:
+            print(f"Ledger render failed: {exc}")
+        finally:
+            self._rendering_cards = False
+            if self._pending_render_cards:
+                self._pending_render_cards = False
+                self._schedule_render_cards()
 
     def _new_customer(self):
         CustomerFormDialog(self, self.app, None, self._save_new, user=self._target_user())
@@ -1233,11 +1353,13 @@ class CashierSettingsPage(ctk.CTkFrame):
         ctk.CTkButton(card, text=button_text, fg_color=t["accent"], hover_color=t["accent_hover"], command=command).pack(anchor="w", padx=18, pady=(0, 18))
 
     def _pdf_today(self):
-        try:
-            path = self.app.create_report_pdf(datetime.now().strftime("%Y-%m-%d"), self.user["id"])
-            messagebox.showinfo("Rapor", f"PDF oluşturuldu:\n{path}")
-        except Exception as e:
-            messagebox.showerror("Hata", f"PDF oluşturulurken hata:\n{e}")
+        def work():
+            return self.app.create_report_pdf(datetime.now().strftime("%Y-%m-%d"), self.user["id"])
+
+        def done(path):
+            messagebox.showinfo("Rapor", f"PDF oluşturuldu:\n{path}", parent=self)
+
+        _run_ui_background(self, self.app, "cashier_daily_pdf", work, done, "Hata")
 
     def _open_customer_settings(self):
         win = ctk.CTkToplevel(self)
@@ -1254,10 +1376,12 @@ class CashierDetailDialog(ctk.CTkToplevel):
     def __init__(self, parent, app, cashier: dict, on_saved):
         super().__init__(parent)
         self.app = app
+        self.parent_page = parent
         self.db = app.db
         self.cashier = cashier
         self.cashier_id = cashier["id"]
         self.cashier_username = cashier.get("username", "")
+        self.cashier_active = _cashier_is_active(cashier)
         self.cashier_db = app.get_cashier_db(self.cashier_username)
         self.on_saved = on_saved
         t = app.theme
@@ -1283,10 +1407,31 @@ class CashierDetailDialog(ctk.CTkToplevel):
     def _build_info(self, parent):
         t = self.app.theme
         ctk.CTkLabel(parent, text="Kasa bilgileri", font=ctk.CTkFont(size=18, weight="bold"), text_color=t["text"]).pack(anchor="w", padx=18, pady=(18, 8))
+        status_text = "Durum: Aktif" if self.cashier_active else "Durum: Pasif"
+        status_color = t["success"] if self.cashier_active else t["danger"]
+        ctk.CTkLabel(parent, text=status_text, text_color=status_color, font=ctk.CTkFont(size=13, weight="bold")).pack(anchor="w", padx=18, pady=(0, 8))
         self.e_name = ctk.CTkEntry(parent, width=360, **_entry_kwargs(t)); self.e_name.pack(anchor="w", padx=18, pady=6); self.e_name.insert(0, self.cashier.get("full_name", ""))
         self.e_user = ctk.CTkEntry(parent, width=360, **_entry_kwargs(t)); self.e_user.pack(anchor="w", padx=18, pady=6); self.e_user.insert(0, self.cashier.get("username", ""))
         self.e_pass = ctk.CTkEntry(parent, width=360, placeholder_text="Yeni Şifre", show="*", **_entry_kwargs(t)); self.e_pass.pack(anchor="w", padx=18, pady=6)
-        ctk.CTkButton(parent, text="Kaydet", fg_color=t["accent"], command=self._save_info).pack(anchor="w", padx=18, pady=14)
+        actions = ctk.CTkFrame(parent, fg_color="transparent")
+        actions.pack(anchor="w", padx=18, pady=14)
+        ctk.CTkButton(actions, text="Kaydet", fg_color=t["accent"], command=self._save_info).pack(side="left")
+        if self.cashier_active:
+            ctk.CTkButton(
+                actions,
+                text="Pasifleştir",
+                fg_color=t["danger"],
+                hover_color="#991b1b",
+                command=self._passivate_cashier,
+            ).pack(side="left", padx=(10, 0))
+        else:
+            ctk.CTkButton(
+                actions,
+                text="Aktif Et",
+                fg_color=t["success"],
+                hover_color=t.get("success_hover", t["success"]),
+                command=self._activate_cashier,
+            ).pack(side="left", padx=(10, 0))
 
     def _build_today(self, parent):
         t = self.app.theme
@@ -1366,6 +1511,43 @@ class CashierDetailDialog(ctk.CTkToplevel):
         self.e_pass.delete(0, "end")
         self.on_saved()
         messagebox.showinfo("Kasa", "Kasa güncellendi.")
+
+    def _passivate_cashier(self):
+        if not messagebox.askyesno(
+            "Pasifleştir",
+            f"@{self.cashier_username} kasası pasifleştirilsin mi?\n\nVeriler silinmeyecek, local DB ve Supabase kayıtları korunacak.",
+            parent=self,
+        ):
+            return
+        self._run_active_toggle(False)
+
+    def _activate_cashier(self):
+        if not messagebox.askyesno(
+            "Aktif Et",
+            f"@{self.cashier_username} kasası aktif edilsin mi?",
+            parent=self,
+        ):
+            return
+        self._run_active_toggle(True)
+
+    def _run_active_toggle(self, active: bool):
+        def work():
+            if active:
+                return self.app.activate_cashier_profile(self.cashier_id)
+            return self.app.passivate_cashier_profile(self.cashier_id)
+
+        def done(updated):
+            if hasattr(self.parent_page, "_apply_cashier_active_result"):
+                self.parent_page._apply_cashier_active_result(self.cashier, updated)
+            else:
+                self.on_saved()
+            messagebox.showinfo("Kasa", "Kasa aktif edildi." if active else "Kasa pasifleştirildi.", parent=self)
+            self.destroy()
+
+        def failed(exc):
+            messagebox.showerror("Hata", str(exc), parent=self)
+
+        self.app.run_background_io("cashier_detail_active_toggle", work, done, failed)
 
 
 class CashierCreateDialog(ctk.CTkToplevel):
@@ -1522,12 +1704,14 @@ class BackupSettingsDialog(ctk.CTkToplevel):
             label.configure(text=status.get(key) or "-")
 
     def _backup_now(self):
-        result = self.manager.create_backup("manual")
-        self._refresh_status()
-        if result.ok:
-            messagebox.showinfo("Yedekleme", result.message)
-        else:
-            messagebox.showerror("Yedekleme", result.message)
+        def done(result):
+            self._refresh_status()
+            if result.ok:
+                messagebox.showinfo("Yedekleme", result.message, parent=self)
+            else:
+                messagebox.showerror("Yedekleme", result.message, parent=self)
+
+        _run_ui_background(self, self.app, "manual_backup", lambda: self.manager.create_backup("manual"), done, "Yedekleme")
 
     def _choose_drive(self):
         messagebox.showinfo("Yedekleme", "Google Drive yedekleme pasif. Yerel yedekleme kullanılacak.")
@@ -1820,7 +2004,10 @@ class StockAdjustmentDialog(ctk.CTkToplevel):
                 cashier_id=self.cashier_id,
             )
             if self.username:
-                self.app.export_cashier_files(self.username)
+                if hasattr(self.app, "run_background_io"):
+                    self.app.run_background_io("stock_export", lambda: self.app.export_cashier_files(self.username))
+                else:
+                    self.app.export_cashier_files(self.username)
         except Exception as exc:
             messagebox.showerror("Stok", str(exc))
             return
@@ -1849,7 +2036,7 @@ class ProductManageDialog(ctk.CTkToplevel):
             self.show_archived = ctk.BooleanVar(value=False)
             ctk.CTkCheckBox(
                 bf,
-                text="Arşivlenmiş kayıtları göster",
+                text="Pasif ürünleri göster",
                 variable=self.show_archived,
                 command=self._refresh,
                 text_color=t["muted"],
@@ -2144,17 +2331,30 @@ class AdminSettingsPage(ctk.CTkFrame):
 
     @measure("dashboard_render_suresi", lambda self: "AdminSettingsPage._refresh_kasa_cards")
     def _refresh_kasa_cards(self):
+        if getattr(self, "_refreshing_kasa_cards", False):
+            self._pending_kasa_refresh = True
+            return
+        self._refreshing_kasa_cards = True
         t = self.app.theme
-        for w in self.kasa_scroll.winfo_children():
-            w.destroy()
+        try:
+            for w in self.kasa_scroll.winfo_children():
+                w.destroy()
 
-        today = datetime.now().strftime("%Y-%m-%d")
-        cashiers = self.db.list_cashiers()
-        for w in self.admin_summary.winfo_children():
-            w.destroy()
-        for w in self.setup_status_box.winfo_children():
-            w.destroy()
-        setup = self.app.setup_status()
+            today = datetime.now().strftime("%Y-%m-%d")
+            cashiers = self.db.list_cashiers(include_archived=True)
+            active_cashiers = [cashier for cashier in cashiers if _cashier_is_active(cashier)]
+            for w in self.admin_summary.winfo_children():
+                w.destroy()
+            for w in self.setup_status_box.winfo_children():
+                w.destroy()
+            setup = self.app.setup_status()
+            self._kasa_cards = {}
+            self._kasa_summary_labels = {}
+            self._kasa_cashiers_cache = {int(row["id"]): dict(row) for row in cashiers}
+        except Exception as exc:
+            self._refreshing_kasa_cards = False
+            print(f"Kasa refresh prepare failed: {exc}")
+            return
         setup_lines = [
             f"Program sürümü: {setup['app_version']}",
             f"Veri şema sürümü: {setup['data_schema_version']}",
@@ -2183,12 +2383,14 @@ class AdminSettingsPage(ctk.CTkFrame):
             ("Bugun Toplam", money(daily["pos_total"] + daily["ciro"] - expenses)),
             ("Satis", f"{daily['pos_sale_count']} adet"),
             ("Bakiye Yukleme", money(daily["yukleme"])),
-            ("Aktif Kasa", str(len(cashiers))),
+            ("Aktif Kasa", str(len(active_cashiers))),
         ]:
             box = ctk.CTkFrame(self.admin_summary, fg_color=t.get("glass", t["panel"]), corner_radius=12, border_width=1, border_color=t["border"])
             box.pack(side="left", fill="x", expand=True, padx=6)
             ctk.CTkLabel(box, text=title, font=ctk.CTkFont(size=12, weight="bold"), text_color=t["muted"]).pack(anchor="w", padx=14, pady=(12, 2))
-            ctk.CTkLabel(box, text=value, font=ctk.CTkFont(size=20, weight="bold"), text_color=t["text"]).pack(anchor="w", padx=14, pady=(0, 12))
+            value_label = ctk.CTkLabel(box, text=value, font=ctk.CTkFont(size=20, weight="bold"), text_color=t["text"])
+            value_label.pack(anchor="w", padx=14, pady=(0, 12))
+            self._kasa_summary_labels[title] = value_label
         if not cashiers:
             ctk.CTkLabel(self.kasa_scroll, text="Henüz kasa kullanıcısı yok.", text_color=t["muted"]).pack(pady=40)
             return
@@ -2199,6 +2401,7 @@ class AdminSettingsPage(ctk.CTkFrame):
         grid = ctk.CTkFrame(self.kasa_scroll, fg_color="transparent")
         grid.pack(fill="both", expand=True)
         for i, k in enumerate(cashiers):
+            is_active = _cashier_is_active(k)
             summary = summaries.get(k["id"], {"ciro": 0.0, "yukleme": 0.0, "pos_total": 0.0})
             gunluk = float(summary["pos_total"]) + float(summary["ciro"])
 
@@ -2209,7 +2412,7 @@ class AdminSettingsPage(ctk.CTkFrame):
                 border_width=1,
                 border_color=t["border"],
                 width=300,
-                height=168,
+                height=188,
             )
             card.grid(row=i // 2, column=i % 2, padx=12, pady=12, sticky="nw")
 
@@ -2235,29 +2438,34 @@ class AdminSettingsPage(ctk.CTkFrame):
             name_l.pack(side="left")
             name_l.bind("<Button-1>", open_detail)
 
-            # Delete button for cashier (not for admin self)
-            def delete_cashier(kk=k):
-                if not messagebox.askyesno("Onay", f"@{kk['username']} kasasını pasifleştirmek istediğinize emin misiniz?\n\nVeriler silinmeyecek, kasa girişi kapanacak."):
-                    return
-                self.db.delete_cashier(kk["id"])
-                self._refresh_kasa_cards()
-
             if k.get("user_type") != "admin":
-                del_btn = ctk.CTkButton(
+                action_btn = ctk.CTkButton(
                     header,
-                    text="Pasifleştir",
-                    width=50,
+                    text="Pasifleştir" if is_active else "Aktif Et",
+                    width=86,
                     height=28,
-                    fg_color=t["danger"],
-                    hover_color="#991b1b",
+                    fg_color=t["danger"] if is_active else t["success"],
+                    hover_color="#991b1b" if is_active else t.get("success_hover", t["success"]),
                     font=ctk.CTkFont(size=11),
-                    command=delete_cashier
                 )
-                del_btn.pack(side="right")
+                action_btn.configure(command=lambda kk=k, btn=action_btn: self._toggle_cashier_active(kk, btn))
+                action_btn.pack(side="right")
+            else:
+                action_btn = None
 
             sub = ctk.CTkLabel(inner, text=f"@{k['username']}", text_color=t["muted"], font=ctk.CTkFont(size=12))
             sub.pack(anchor="w", pady=(4, 12))
             sub.bind("<Button-1>", open_detail)
+
+            status_l = ctk.CTkLabel(
+                inner,
+                text="Aktif" if is_active else "Pasif",
+                text_color=t["success"] if is_active else t["danger"],
+                font=ctk.CTkFont(size=12, weight="bold"),
+            )
+            status_l.pack(anchor="w", pady=(0, 6))
+            status_l.bind("<Button-1>", open_detail)
+            self._kasa_cards[int(k["id"])] = {"status": status_l, "button": action_btn, "cashier": k}
 
             sync_status = sync_statuses.get(k["username"])
             sync_text = "Son senkron: -"
@@ -2302,6 +2510,70 @@ class AdminSettingsPage(ctk.CTkFrame):
             hint = ctk.CTkLabel(inner, text="Detay için tıkla", text_color=t["muted"], font=ctk.CTkFont(size=11))
             hint.pack(anchor="w", pady=(8, 0))
             hint.bind("<Button-1>", open_detail)
+        self._refreshing_kasa_cards = False
+        if getattr(self, "_pending_kasa_refresh", False):
+            self._pending_kasa_refresh = False
+            self.after(120, self._refresh_kasa_cards)
+
+    def _toggle_cashier_active(self, cashier: dict, button=None):
+        is_active = _cashier_is_active(cashier)
+        action = "Pasifleştir" if is_active else "Aktif Et"
+        if not messagebox.askyesno(
+            action,
+            f"@{cashier.get('username', '')} kasası {'pasifleştirilsin' if is_active else 'aktif edilsin'} mi?",
+            parent=self,
+        ):
+            return
+        if button:
+            button.configure(state="disabled", text="İşleniyor...")
+
+        def work():
+            if is_active:
+                return self.app.passivate_cashier_profile(cashier["id"])
+            return self.app.activate_cashier_profile(cashier["id"])
+
+        def done(updated):
+            self._apply_cashier_active_result(cashier, updated, button)
+            messagebox.showinfo("Kasa", f"Kasa {'pasifleştirildi' if is_active else 'aktif edildi'}.", parent=self)
+
+        def failed(exc):
+            if button:
+                button.configure(state="normal", text=action)
+            messagebox.showerror("Kasa", str(exc), parent=self)
+
+        self.app.run_background_io("cashier_active_toggle", work, done, failed)
+
+    def _apply_cashier_active_result(self, old_cashier: dict, updated: dict, button=None):
+        cashier = dict(old_cashier)
+        cashier.update(updated or {})
+        cashier_id = int(cashier["id"])
+        is_active = _cashier_is_active(cashier)
+        card = getattr(self, "_kasa_cards", {}).get(cashier_id, {})
+        if card.get("status"):
+            card["status"].configure(
+                text="Aktif" if is_active else "Pasif",
+                text_color=self.app.theme["success"] if is_active else self.app.theme["danger"],
+            )
+        target_button = button or card.get("button")
+        if target_button:
+            target_button.configure(
+                state="normal",
+                text="Pasifleştir" if is_active else "Aktif Et",
+                fg_color=self.app.theme["danger"] if is_active else self.app.theme["success"],
+                hover_color="#991b1b" if is_active else self.app.theme.get("success_hover", self.app.theme["success"]),
+            )
+            target_button.configure(command=lambda kk=cashier, btn=target_button: self._toggle_cashier_active(kk, btn))
+        card["cashier"] = cashier
+        self._kasa_cards[cashier_id] = card
+        if hasattr(self, "_kasa_cashiers_cache"):
+            self._kasa_cashiers_cache[cashier_id] = cashier
+            active_count = sum(1 for row in self._kasa_cashiers_cache.values() if _cashier_is_active(row))
+            label = getattr(self, "_kasa_summary_labels", {}).get("Aktif Kasa")
+            if label:
+                label.configure(text=str(active_count))
+
+    def _start_delete_cashier(self, cashier: dict, button=None):
+        messagebox.showinfo("Kasa", "Kalıcı silme devre dışı. Kasa için Pasifleştir/Aktif Et kullanın.", parent=self)
 
     def _build_reports_view(self):
         t = self.app.theme
@@ -2342,8 +2614,14 @@ class AdminSettingsPage(ctk.CTkFrame):
 
     @measure("pdf_olusturma_suresi", lambda self: "AdminSettingsPage._pdf_daily_live_report")
     def _pdf_daily_live_report(self):
-        path = self.app.create_report_pdf(datetime.now().strftime("%Y-%m-%d"), None)
-        messagebox.showinfo("PDF", path)
+        _run_ui_background(
+            self,
+            self.app,
+            "admin_daily_pdf",
+            lambda: self.app.create_report_pdf(datetime.now().strftime("%Y-%m-%d"), None),
+            lambda path: messagebox.showinfo("PDF", path, parent=self),
+            "PDF",
+        )
 
     def selected_date(self):
         return self.date_picker.get_date().strftime("%Y-%m-%d")
@@ -2376,8 +2654,14 @@ class AdminSettingsPage(ctk.CTkFrame):
         if date_str >= datetime.now().strftime("%Y-%m-%d"):
             messagebox.showwarning("Geçmiş Raporlar", "Bugünün raporu bu ekrandan alınmaz. Lütfen Günlük Rapor ekranını kullanın.")
             return
-        path = self.app.create_report_pdf(date_str, None)
-        messagebox.showinfo("PDF", path)
+        _run_ui_background(
+            self,
+            self.app,
+            "archive_report_pdf",
+            lambda: self.app.create_report_pdf(date_str, None),
+            lambda path: messagebox.showinfo("PDF", path, parent=self),
+            "PDF",
+        )
 
     def _get_cashier_name(self, cashier_id):
         """Get cashier name by ID."""
@@ -2653,21 +2937,27 @@ class AdminSettingsPage(ctk.CTkFrame):
         date_str = self.defter_daily_date.get_date().strftime("%Y-%m-%d")
         cashier_id = self._get_defter_daily_cashier_id()
 
-        try:
-            path = self.app.create_defter_daily_pdf(date_str, cashier_id)
-            messagebox.showinfo("PDF", f"DEFTER günlük raporu oluşturuldu:\n{path}")
-        except Exception as e:
-            messagebox.showerror("Hata", f"PDF oluşturulurken hata:\n{str(e)}")
+        _run_ui_background(
+            self,
+            self.app,
+            "defter_daily_pdf",
+            lambda: self.app.create_defter_daily_pdf(date_str, cashier_id),
+            lambda path: messagebox.showinfo("PDF", f"DEFTER günlük raporu oluşturuldu:\n{path}", parent=self),
+            "Hata",
+        )
 
     def _pdf_defter_balance(self):
         """Generate PDF for DEFTER balance report."""
         cashier_id = self._get_defter_balance_cashier_id()
 
-        try:
-            path = self.app.create_defter_balance_pdf(cashier_id)
-            messagebox.showinfo("PDF", f"DEFTER bakiye özeti oluşturuldu:\n{path}")
-        except Exception as e:
-            messagebox.showerror("Hata", f"PDF oluşturulurken hata:\n{str(e)}")
+        _run_ui_background(
+            self,
+            self.app,
+            "defter_balance_pdf",
+            lambda: self.app.create_defter_balance_pdf(cashier_id),
+            lambda path: messagebox.showinfo("PDF", f"DEFTER bakiye özeti oluşturuldu:\n{path}", parent=self),
+            "Hata",
+        )
 
     def on_show(self):
         self._highlight_sidebar(self.active_sidebar_key)
@@ -3096,6 +3386,9 @@ class PayConfirmDialog(ctk.CTkToplevel):
 
 
 class DefterPickerDialog(ctk.CTkToplevel):
+    PAGE_SIZE = 40
+    RENDER_BATCH_SIZE = 10
+
     @measure("dashboard_render_suresi", lambda self, parent, app, on_pick, user=None: "DefterPickerDialog")
     def __init__(self, parent, app, on_pick, user=None):
         super().__init__(parent)
@@ -3115,67 +3408,205 @@ class DefterPickerDialog(ctk.CTkToplevel):
         self.lift()
         self.focus_force()
         self.letter = ""
+        self._render_after_id = None
+        self._render_token = 0
+        self._loading = False
+        self._pending_picker_render = False
+        self._closed = False
+        self._all_customers = []
+        self._visible_count = 0
+        self._letter_buttons = {}
         self.search_var = ctk.StringVar()
         search = ctk.CTkEntry(self, textvariable=self.search_var, placeholder_text="Musteri ara...", **_entry_kwargs(t))
         search.pack(fill="x", padx=10, pady=(12, 4))
-        search.bind("<KeyRelease>", lambda _e: self._render())
+        search.bind("<KeyRelease>", lambda _e: self._schedule_render())
         top = ctk.CTkFrame(self, fg_color="transparent")
         top.pack(fill="x", padx=10, pady=(4, 10))
-        ctk.CTkButton(
+        self._all_button = ctk.CTkButton(
             top,
             text="Tumu",
-            width=64,
-            height=28,
+            width=68,
+            height=32,
             fg_color=t["accent"],
+            hover_color=t["accent_hover"],
+            text_color="#FFFFFF",
+            font=ctk.CTkFont(size=13, weight="bold"),
             command=lambda: self._set_letter(""),
-        ).grid(row=0, column=0, padx=2, pady=2)
+        )
+        self._all_button.grid(row=0, column=0, padx=3, pady=3)
         for i, L in enumerate(string.ascii_uppercase):
-            ctk.CTkButton(
+            btn = ctk.CTkButton(
                 top,
                 text=L,
-                width=32,
-                height=28,
-                fg_color=t["panel2"],
+                width=36,
+                height=32,
+                fg_color=t.get("input", t["panel2"]),
+                hover_color=t["accent_hover"],
+                text_color=t["text"],
+                border_width=1,
+                border_color=t["border"],
+                font=ctk.CTkFont(size=13, weight="bold"),
                 command=lambda x=L: self._set_letter(x),
-            ).grid(row=(i + 1) // 13, column=(i + 1) % 13, padx=2, pady=2)
+            )
+            btn.grid(row=(i + 1) // 13, column=(i + 1) % 13, padx=3, pady=3)
+            self._letter_buttons[L] = btn
         self.list_fr = ctk.CTkScrollableFrame(self, fg_color=t["panel"])
         self.list_fr.pack(fill="both", expand=True, padx=10, pady=10)
-        self._render()
+        self._set_letter_button_state()
+        self.after(40, self._render)
 
     def _set_letter(self, L):
         self.letter = L
-        self._render()
+        self._set_letter_button_state()
+        self._schedule_render()
+
+    def _set_letter_button_state(self):
+        t = self.app.theme
+        all_active = self.letter == ""
+        self._all_button.configure(
+            fg_color=t["accent"] if all_active else t.get("input", t["panel2"]),
+            text_color="#FFFFFF" if all_active else t["text"],
+            border_color=t["accent"] if all_active else t["border"],
+        )
+        for letter, btn in self._letter_buttons.items():
+            active = self.letter == letter
+            btn.configure(
+                fg_color=t["accent"] if active else t.get("input", t["panel2"]),
+                text_color="#FFFFFF" if active else t["text"],
+                border_color=t["accent"] if active else t["border"],
+            )
+
+    def _schedule_render(self):
+        if self._render_after_id:
+            try:
+                self.after_cancel(self._render_after_id)
+            except Exception:
+                pass
+        self._render_after_id = self.after(220, self._render)
+
+    def _safe_exists(self) -> bool:
+        return not self._closed and bool(self.winfo_exists())
 
     @measure("musteri_arama_suresi", lambda self: f"DefterPicker letter={getattr(self, 'letter', '')}")
     def _render(self):
+        if not self._safe_exists():
+            return
+        if self._loading:
+            self._pending_picker_render = True
+            return
+        self._loading = True
+        self._render_token += 1
+        token = self._render_token
         for w in self.list_fr.winfo_children():
             w.destroy()
         t = self.app.theme
+        ctk.CTkLabel(self.list_fr, text="Müşteriler yükleniyor...", text_color=t["muted"]).pack(pady=24)
         search_text = self.search_var.get().strip()
-        if search_text:
-            customers = self.app.db.list_customers(search_text, cashier_id=self.cashier_id)
-        elif self.letter:
-            customers = self.app.db.list_customers_startswith(self.letter, cashier_id=self.cashier_id)
-        else:
-            customers = self.app.db.list_customers("", cashier_id=self.cashier_id)
-        if not customers:
-            ctk.CTkLabel(self.list_fr, text="Musteri bulunamadi", text_color=t["muted"]).pack(pady=24)
+
+        def work():
+            if search_text:
+                return self.app.db.list_customers(search_text, cashier_id=self.cashier_id)
+            if self.letter:
+                return self.app.db.list_customers_startswith(self.letter, cashier_id=self.cashier_id)
+            return self.app.db.list_customers("", cashier_id=self.cashier_id)
+
+        def done(customers):
+            if not self._safe_exists() or token != self._render_token:
+                return
+            self._loading = False
+            if self._pending_picker_render:
+                self._pending_picker_render = False
+                self._schedule_render()
+                return
+            self._all_customers = list(customers or [])
+            self._visible_count = 0
+            for w in self.list_fr.winfo_children():
+                w.destroy()
+            if not self._all_customers:
+                ctk.CTkLabel(self.list_fr, text="Müşteri bulunamadı", text_color=t["muted"]).pack(pady=24)
+                return
+            self._render_next_page(token)
+
+        def failed(exc):
+            if not self._safe_exists() or token != self._render_token:
+                return
+            self._loading = False
+            if self._pending_picker_render:
+                self._pending_picker_render = False
+                self._schedule_render()
+                return
+            for w in self.list_fr.winfo_children():
+                w.destroy()
+            ctk.CTkLabel(self.list_fr, text=f"Müşteri listesi okunamadı: {exc}", text_color=t["danger"], wraplength=620).pack(pady=24, padx=16)
+
+        self.app.run_background_io("defter_customer_load", work, done, failed)
+
+    def _render_next_page(self, token=None):
+        if not self._safe_exists():
             return
-        for c in customers:
+        token = self._render_token if token is None else token
+        for child in self.list_fr.winfo_children():
+            if getattr(child, "_is_more_button", False):
+                child.destroy()
+        start = self._visible_count
+        end = min(len(self._all_customers), start + self.PAGE_SIZE)
+        self._render_customer_batch(start, end, token)
+
+    def _render_customer_batch(self, index: int, end: int, token: int):
+        if not self._safe_exists() or token != self._render_token:
+            return
+        batch_end = min(end, index + self.RENDER_BATCH_SIZE)
+        for c in self._all_customers[index:batch_end]:
+            self._add_customer_row(c)
+        self._visible_count = batch_end
+        if batch_end < end:
+            self.after(1, lambda: self._render_customer_batch(batch_end, end, token))
+            return
+        if self._visible_count < len(self._all_customers):
+            self._add_more_button()
+
+    def _add_customer_row(self, c: dict):
+        t = self.app.theme
+        try:
             row = ctk.CTkFrame(self.list_fr, fg_color=t["panel2"], corner_radius=8)
             row.pack(fill="x", pady=5)
-            ctk.CTkLabel(row, text=f"{c['name']} — {money(c['balance'])}", text_color=t["text"]).pack(side="left", padx=10, pady=8)
+            ctk.CTkLabel(row, text=f"{c['name']} - {money(c['balance'])}", text_color=t["text"]).pack(side="left", padx=10, pady=8)
             ctk.CTkButton(
                 row,
                 text="Sec",
                 width=80,
                 fg_color=t["accent"],
+                hover_color=t["accent_hover"],
                 command=lambda x=c: self._choose(x),
             ).pack(side="right", padx=8)
+        except Exception as exc:
+            print(f"Defter customer row skipped: {exc}")
+
+    def _add_more_button(self):
+        t = self.app.theme
+        btn = ctk.CTkButton(
+            self.list_fr,
+            text=f"Daha fazla göster ({self._visible_count}/{len(self._all_customers)})",
+            fg_color=t["panel2"],
+            hover_color=t["accent_hover"],
+            text_color=t["text"],
+            command=lambda: self._render_next_page(self._render_token),
+        )
+        btn._is_more_button = True
+        btn.pack(fill="x", pady=10, padx=6)
 
     def _choose(self, c):
         self.on_pick(c)
         self.destroy()
+
+    def destroy(self):
+        self._closed = True
+        if self._render_after_id:
+            try:
+                self.after_cancel(self._render_after_id)
+            except Exception:
+                pass
+        super().destroy()
 
 
 class CustomerBalanceStatusDialog(ctk.CTkToplevel):
@@ -3259,20 +3690,19 @@ class CustomerBalanceStatusDialog(ctk.CTkToplevel):
 
     @measure("pdf_olusturma_suresi", lambda self: "CustomerBalanceStatusDialog._create_pdf")
     def _create_pdf(self):
-        try:
-            path = self._write_pdf()
-        except Exception as exc:
-            messagebox.showerror("Hata", f"PDF oluşturulurken hata:\n{exc}")
-            return
-        should_print = messagebox.askyesno(
-            "PDF Oluştur/Yazdır",
-            f"PDF oluşturuldu:\n{path}\n\nYazdırmaya gönderilsin mi?",
-        )
-        if should_print:
-            try:
-                os.startfile(path, "print")
-            except Exception as exc:
-                messagebox.showwarning("Yazdır", f"PDF oluşturuldu ancak yazdırma başlatılamadı:\n{exc}\n\n{path}")
+        def done(path):
+            should_print = messagebox.askyesno(
+                "PDF Oluştur/Yazdır",
+                f"PDF oluşturuldu:\n{path}\n\nYazdırmaya gönderilsin mi?",
+                parent=self,
+            )
+            if should_print:
+                try:
+                    os.startfile(path, "print")
+                except Exception as exc:
+                    messagebox.showwarning("Yazdır", f"PDF oluşturuldu ancak yazdırma başlatılamadı:\n{exc}\n\n{path}", parent=self)
+
+        _run_ui_background(self, self.app, "customer_balance_pdf", self._write_pdf, done, "Hata")
 
     @measure("pdf_olusturma_suresi", lambda self: "CustomerBalanceStatusDialog._write_pdf")
     def _write_pdf(self):

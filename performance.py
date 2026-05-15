@@ -131,6 +131,8 @@ def audit_python_sources(root: str | Path | None = None) -> None:
     """Best-effort code hygiene scan, run in background and log-only."""
     if not PERFORMANCE_DEBUG:
         return
+    if os.environ.get("MATADORS_PERF_AUDIT", "").strip() not in {"1", "true", "TRUE", "yes"}:
+        return
 
     def worker() -> None:
         scan_root = Path(root or Path(__file__).resolve().parent)

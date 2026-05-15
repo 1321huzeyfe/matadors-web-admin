@@ -231,7 +231,7 @@ export default async function Page({ searchParams }: { searchParams?: { branch?:
         </header>
 
         <section className="debug-strip">
-          API customers: {numberText(debug.apiCustomers)}, products: {numberText(debug.apiProducts)}, sales: {numberText(debug.apiSales)}, customers before/after: {numberText(debug.customersBefore)}/{numberText(debug.customersAfter)}, products before/after: {numberText(debug.productsBefore)}/{numberText(debug.productsAfter)}, unmatched: {numberText(debug.unmatchedCustomers)}/{numberText(debug.unmatchedProducts)}, selectedKey: {debug.selectedKey}
+          buildVersion: {debug.buildVersion}, dropdownBranches: [{debug.dropdownBranches.join(", ")}], API customers: {numberText(debug.apiCustomers)}, products: {numberText(debug.apiProducts)}, sales: {numberText(debug.apiSales)}, customers before/after: {numberText(debug.customersBefore)}/{numberText(debug.customersAfter)}, products before/after: {numberText(debug.productsBefore)}/{numberText(debug.productsAfter)}, unmatched: {numberText(debug.unmatchedCustomers)}/{numberText(debug.unmatchedProducts)}, selectedKey: {debug.selectedKey}
         </section>
 
         {data.errors.length > 0 && (

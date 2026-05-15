@@ -296,6 +296,26 @@ class KasaCoreMixin:
                 if "is_active" not in table_cols:
                     conn.execute(f"ALTER TABLE {table} ADD COLUMN is_active INTEGER DEFAULT 1")
 
+        for sql in (
+            "CREATE INDEX IF NOT EXISTS idx_users_active_type ON users(user_type, archived, is_active)",
+            "CREATE INDEX IF NOT EXISTS idx_users_username ON users(username)",
+            "CREATE INDEX IF NOT EXISTS idx_customers_cashier_name ON customers(cashier_id, name)",
+            "CREATE INDEX IF NOT EXISTS idx_customers_cashier_active ON customers(cashier_id, archived, is_active)",
+            "CREATE INDEX IF NOT EXISTS idx_customers_phone ON customers(phone)",
+            "CREATE INDEX IF NOT EXISTS idx_customers_created_at ON customers(created_at)",
+            "CREATE INDEX IF NOT EXISTS idx_products_cashier_active ON products(cashier_id, active, archived, is_active)",
+            "CREATE INDEX IF NOT EXISTS idx_products_cashier_category_name ON products(cashier_id, category, name)",
+            "CREATE INDEX IF NOT EXISTS idx_products_created_at ON products(created_at)",
+            "CREATE INDEX IF NOT EXISTS idx_sales_cashier_created ON sales(cashier_id, created_at)",
+            "CREATE INDEX IF NOT EXISTS idx_sales_customer ON sales(customer_id)",
+            "CREATE INDEX IF NOT EXISTS idx_sale_items_sale_product ON sale_items(sale_id, product_id)",
+            "CREATE INDEX IF NOT EXISTS idx_transactions_cashier_created ON transactions(cashier_id, created_at)",
+            "CREATE INDEX IF NOT EXISTS idx_transactions_customer_created ON transactions(customer_id, created_at)",
+            "CREATE INDEX IF NOT EXISTS idx_balance_history_customer_id ON balance_history(customer_id, id)",
+            "CREATE INDEX IF NOT EXISTS idx_expenses_cashier_created ON expenses(cashier_id, created_at)",
+        ):
+            conn.execute(sql)
+
     def _seed_defaults(self):
         with closing(self._connect()) as conn, conn:
             # Sync users from auth_db (no passwords stored here)

@@ -94,6 +94,7 @@ class MatadorsKasaApp(ctk.CTk):
             self._supabase_queue_lock = threading.Lock()
             self._supabase_queue_stop = threading.Event()
             self._supabase_queue_thread = None
+            self._setup_status_cache = None
             
             # Initialize database with error handling
             try:
@@ -173,7 +174,20 @@ class MatadorsKasaApp(ctk.CTk):
         except Exception as exc:
             print(f"Supabase queue thread error: {exc}")
 
-    def run_background_io(self, name: str, work, on_done=None) -> None:
+    def _after_ui(self, callback) -> None:
+        def safe_callback():
+            try:
+                callback()
+            except Exception as exc:
+                print(f"UI callback error: {exc}\n{traceback.format_exc()}")
+
+        try:
+            if self.winfo_exists():
+                self.after(0, safe_callback)
+        except Exception as exc:
+            print(f"UI callback schedule error: {exc}")
+
+    def run_background_io(self, name: str, work, on_done=None, on_error=None) -> None:
         """Run slow file/network work off the Tk thread."""
         def worker():
             result = None
@@ -181,18 +195,19 @@ class MatadorsKasaApp(ctk.CTk):
                 with perf_timer("arka_plan_is_suresi", name):
                     result = work()
             except Exception as exc:
-                print(f"{name} background error: {exc}")
+                print(f"{name} background error: {exc}\n{traceback.format_exc()}")
+                if on_error:
+                    self._after_ui(lambda exc=exc: on_error(exc))
                 return
             if on_done:
-                try:
-                    self.after(0, lambda: on_done(result))
-                except Exception:
-                    pass
+                self._after_ui(lambda result=result: on_done(result))
 
         try:
             threading.Thread(target=worker, name=f"MatadorsBackground-{name}", daemon=True).start()
         except Exception as exc:
-            print(f"{name} thread error: {exc}")
+            print(f"{name} thread error: {exc}\n{traceback.format_exc()}")
+            if on_error:
+                self._after_ui(lambda exc=exc: on_error(exc))
 
     def _bootstrap_supabase_profile_once_async(self, user: dict) -> None:
         """Best-effort first-open pull for the active profile; never blocks login."""
@@ -371,8 +386,8 @@ class MatadorsKasaApp(ctk.CTk):
         with closing(sqlite3.connect(cashier_db.db_path)) as conn, conn:
             conn.execute(
                 """
-                INSERT OR REPLACE INTO users(id, username, user_type, full_name, email)
-                VALUES(?, ?, ?, ?, ?)
+                INSERT OR REPLACE INTO users(id, username, user_type, full_name, email, archived, is_active)
+                VALUES(?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     user["id"],
@@ -380,6 +395,8 @@ class MatadorsKasaApp(ctk.CTk):
                     user["user_type"],
                     user.get("full_name", ""),
                     user.get("email", ""),
+                    int(user.get("archived", 0) or 0),
+                    int(user.get("is_active", 1) if user.get("is_active") is not None else 1),
                 ),
             )
         self.cashier_data_store.ensure_profile_files(profile)
@@ -389,7 +406,7 @@ class MatadorsKasaApp(ctk.CTk):
 
     def _sync_user_to_cashier_db(self, username: str, user: dict | None = None):
         username = self.profile_manager.sanitize_profile_name(username)
-        user = user or next((u for u in self.db.list_users() if u.get("username") == username), None)
+        user = user or next((u for u in self.db.list_users(include_archived=True) if u.get("username") == username), None)
         if not user:
             return
         profile = self.profile_manager.ensure_cashier_profile(username)
@@ -398,8 +415,8 @@ class MatadorsKasaApp(ctk.CTk):
         with closing(sqlite3.connect(db.db_path)) as conn, conn:
             conn.execute(
                 """
-                INSERT OR REPLACE INTO users(id, username, user_type, full_name, email)
-                VALUES(?, ?, ?, ?, ?)
+                INSERT OR REPLACE INTO users(id, username, user_type, full_name, email, archived, is_active)
+                VALUES(?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     user["id"],
@@ -407,6 +424,8 @@ class MatadorsKasaApp(ctk.CTk):
                     user["user_type"],
                     user.get("full_name", ""),
                     user.get("email", ""),
+                    int(user.get("archived", 0) or 0),
+                    int(user.get("is_active", 1) if user.get("is_active") is not None else 1),
                 ),
             )
 
@@ -414,7 +433,7 @@ class MatadorsKasaApp(ctk.CTk):
         """Update login password in the shared auth DB and refresh local mirrors."""
         username = self.profile_manager.sanitize_profile_name(username)
         self.db.update_user_password(username, new_password)
-        user = next((u for u in self.db.list_users() if u.get("username") == username), None)
+        user = next((u for u in self.db.list_users(include_archived=True) if u.get("username") == username), None)
         if user and user.get("user_type") == "cashier":
             self._sync_user_to_cashier_db(username, user)
         return user
@@ -425,7 +444,7 @@ class MatadorsKasaApp(ctk.CTk):
         full_name = (full_name or "").strip()
         if not new_username or not full_name:
             raise ValueError("Kullanici adi ve kasa adi zorunlu.")
-        old_user = self.db.get_user_by_id(cashier_id)
+        old_user = self.db.get_user_by_id(cashier_id, include_archived=True)
         if not old_user or old_user.get("user_type") != "cashier":
             raise ValueError("Kasa kullanicisi bulunamadi.")
         old_username = self.profile_manager.sanitize_profile_name(old_user.get("username", ""))
@@ -434,7 +453,7 @@ class MatadorsKasaApp(ctk.CTk):
         self.db.update_cashier_profile(cashier_id, new_username, full_name)
         if password.strip():
             self.db.update_cashier_password_by_id(cashier_id, password.strip())
-        user = self.db.get_user_by_id(cashier_id)
+        user = self.db.get_user_by_id(cashier_id, include_archived=True)
         self._sync_user_to_cashier_db(new_username, user)
         self.export_cashier_files(new_username)
         current_user = self.__dict__.get("current_user")
@@ -442,6 +461,133 @@ class MatadorsKasaApp(ctk.CTk):
             self.current_user = user
             self.current_profile = self.profile_manager.profile_for_user(user)
         return user
+
+    def passivate_cashier_profile(self, cashier_id: int) -> dict:
+        """Soft-disable a cashier without deleting business data."""
+        user = self.db.get_user_by_id(cashier_id, include_archived=True)
+        if not user or user.get("user_type") != "cashier":
+            raise ValueError("Kasa kullanicisi bulunamadi.")
+        username = self.profile_manager.sanitize_profile_name(user.get("username", ""))
+        updated = self.db.set_cashier_active(cashier_id, False)
+        self._sync_cashier_active_state(username, cashier_id, False)
+        return updated
+
+    def activate_cashier_profile(self, cashier_id: int) -> dict:
+        """Soft-enable a cashier without recreating or deleting data."""
+        user = self.db.get_user_by_id(cashier_id, include_archived=True)
+        if not user or user.get("user_type") != "cashier":
+            raise ValueError("Kasa kullanicisi bulunamadi.")
+        username = self.profile_manager.sanitize_profile_name(user.get("username", ""))
+        updated = self.db.set_cashier_active(cashier_id, True)
+        self._sync_cashier_active_state(username, cashier_id, True)
+        return updated
+
+    def _sync_cashier_active_state(self, username: str, cashier_id: int, active: bool) -> None:
+        if not username:
+            return
+        archived = 0 if active else 1
+        is_active = 1 if active else 0
+        profile = self.profile_manager.ensure_cashier_profile(username)
+        if profile.local_db_path.exists():
+            with closing(sqlite3.connect(profile.local_db_path)) as conn, conn:
+                cur = conn.execute(
+                    """
+                    UPDATE users SET archived = ?, is_active = ?
+                    WHERE id = ? AND user_type = 'cashier'
+                    """,
+                    (archived, is_active, cashier_id),
+                )
+                if cur.rowcount == 0:
+                    user = self.db.get_user_by_id(cashier_id, include_archived=True)
+                    if user:
+                        conn.execute(
+                            """
+                            INSERT INTO users(id, username, user_type, full_name, email, archived, is_active)
+                            VALUES(?, ?, ?, ?, ?, ?, ?)
+                            """,
+                            (
+                                user["id"],
+                                user["username"],
+                                user["user_type"],
+                                user.get("full_name", ""),
+                                user.get("email", ""),
+                                archived,
+                                is_active,
+                            ),
+                        )
+        self.export_cashier_files(username)
+        self._setup_status_cache = None
+
+    def _cashier_delete_scope(self, cashier: dict) -> dict:
+        username = self.profile_manager.sanitize_profile_name(cashier.get("username", ""))
+        cashier_id = int(cashier.get("id") or 0)
+        if not username or username in {"manager", "admin", "shared", "genel-kasa", "genel_kasa"}:
+            raise ValueError("Bu kasa silinemez.")
+        if cashier.get("user_type") != "cashier" or not cashier_id:
+            raise ValueError("Sadece gerçek kasa kullanıcıları silinebilir.")
+        profile = self.profile_manager.ensure_cashier_profile(username)
+        return {
+            "cashier_id": cashier_id,
+            "username": username,
+            "branch_id": username,
+            "db_path": profile.local_db_path,
+        }
+
+    def _supabase_branch_rows(self, table: str, scope: dict, users: bool = False) -> list[dict]:
+        from services.supabase_client import SUPABASE_KEY, SUPABASE_URL
+        import requests
+
+        branch = scope["branch_id"]
+        cashier_id = str(scope["cashier_id"])
+        if users:
+            username = scope["username"]
+            or_filter = (
+                f"(branch_id.eq.{branch},profile_id.eq.{branch},kasa_id.eq.{branch},"
+                f"cashier_id.eq.{cashier_id},id.eq.{cashier_id},username.eq.{username})"
+            )
+        else:
+            or_filter = f"(branch_id.eq.{branch},profile_id.eq.{branch},kasa_id.eq.{branch},cashier_id.eq.{cashier_id})"
+        headers = {
+            "apikey": SUPABASE_KEY,
+            "Authorization": f"Bearer {SUPABASE_KEY}",
+            "Accept": "application/json",
+        }
+        response = requests.get(
+            f"{SUPABASE_URL.rstrip('/')}/rest/v1/{table}",
+            headers=headers,
+            params={"select": "id", "or": or_filter, "limit": "10000"},
+            timeout=30,
+        )
+        if response.status_code >= 400:
+            raise RuntimeError(f"Supabase {table} okunamadı: {response.status_code} {response.text[:500]}")
+        return response.json() if response.text else []
+
+    def _supabase_branch_delete(self, table: str, scope: dict, users: bool = False) -> int:
+        raise RuntimeError("Kalici kasa silme devre disi. Kasa pasiflestirme/aktif etme kullanilmali.")
+
+    def cashier_delete_dry_run(self, cashier: dict) -> dict:
+        """Count records that would be removed by the hard-delete flow."""
+        scope = self._cashier_delete_scope(cashier)
+        local = {"customers": 0, "products": 0, "sales": 0}
+        db_path = scope["db_path"]
+        if db_path.exists():
+            with closing(sqlite3.connect(db_path)) as conn:
+                conn.row_factory = sqlite3.Row
+                tables = {row["name"] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+                for table in local:
+                    if table in tables:
+                        local[table] = conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+        supabase = {
+            "customers": len(self._supabase_branch_rows("customers", scope)),
+            "products": len(self._supabase_branch_rows("products", scope)),
+            "sales": len(self._supabase_branch_rows("sales", scope)),
+            "users": len(self._supabase_branch_rows("users", scope, users=True)),
+        }
+        return {"scope": scope, "local": local, "supabase": supabase}
+
+    def delete_cashier_branch_data(self, cashier: dict) -> dict:
+        """Disabled: cashier data must only be soft-disabled."""
+        raise RuntimeError("Kalici kasa silme devre disi. Kasa pasiflestirme/aktif etme kullanilmali.")
 
     def _apply_window_icon(self):
         ico = os.path.join(self.assets_dir, "app_icon.ico")
@@ -806,18 +952,9 @@ class MatadorsKasaApp(ctk.CTk):
         if not kasa:
             return False, "Kasa profili geçersiz."
         profile = self.profile_manager.ensure_cashier_profile(kasa)
-        sources = self.find_cashier_sales_sources(kasa)
-        if sources["local"]:
+        if profile.local_db_path.exists() and profile.local_db_path.stat().st_size > 0:
             return True, "Kasa verisi local DB ile hazır."
-        if sources["latest_backup"]:
-            return False, (
-                "Local kasa DB bulunamadı. En güncel yedek bulundu ancak otomatik geri yükleme yapılmadı:\n"
-                f"{sources['latest_backup']}"
-            )
-        expected_paths = "\n".join(
-            str(path) for path in (sources["expected_local"],)
-        )
-        return False, f"Kasa satış verisi bulunamadı. Kontrol edilen öncelikli yollar:\n{expected_paths}"
+        return False, f"Kasa satış verisi bulunamadı. Kontrol edilen öncelikli yol:\n{profile.local_db_path}"
 
     def is_setup_complete(self) -> bool:
         if self.db.get_setting("setup_complete", "") == "1":
@@ -829,8 +966,12 @@ class MatadorsKasaApp(ctk.CTk):
         return complete
 
     def setup_status(self) -> dict:
+        now_ts = datetime.now().timestamp()
+        cached = getattr(self, "_setup_status_cache", None)
+        if cached and now_ts - cached[0] < 3:
+            return dict(cached[1])
         cashiers = self.db.list_cashiers()
-        return {
+        status = {
             "drive_root": "",
             "cloud_selected": False,
             "data_found": False,
@@ -851,6 +992,8 @@ class MatadorsKasaApp(ctk.CTk):
             "web_panel_note": "Web Panel şu anda aktif kullanımda değil.",
             "complete": self.is_setup_complete(),
         }
+        self._setup_status_cache = (now_ts, dict(status))
+        return status
 
     def get_drive_sync_root(self):
         return self.profile_manager.read_drive_root_setting()

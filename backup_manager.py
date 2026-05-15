@@ -48,6 +48,7 @@ class BackupManager:
         self.local_root = self.backup_root
         self.emergency_root = self.backup_root / "emergency"
         self.log_path = self._resolve_log_path()
+        self._backup_list_cache: tuple[float, list[dict[str, str]]] | None = None
 
     def _resolve_backup_root(self) -> Path:
         parts = list(self.db_path.resolve().parts)
@@ -130,6 +131,7 @@ class BackupManager:
                 error=drive_error,
             )
             self._record_result(result, reason)
+            self._backup_list_cache = None
             return result
         except Exception as exc:
             try:
@@ -144,6 +146,7 @@ class BackupManager:
                 error=f"{exc}\n{traceback.format_exc()}",
             )
             self._record_result(result, reason)
+            self._backup_list_cache = None
             return result
 
     def set_drive_root(self, folder: str) -> None:
@@ -198,6 +201,9 @@ class BackupManager:
 
     @measure("gereksiz_dosya_taramasi", lambda self: "list_backups")
     def list_backups(self) -> list[dict[str, str]]:
+        now_ts = datetime.now().timestamp()
+        if self._backup_list_cache and now_ts - self._backup_list_cache[0] < 5:
+            return list(self._backup_list_cache[1])
         items: list[dict[str, str]] = []
         for root in (self.local_root,):
             if not root.exists():
@@ -212,7 +218,8 @@ class BackupManager:
                         "modified": datetime.fromtimestamp(path.stat().st_mtime).strftime("%Y-%m-%d %H:%M:%S"),
                     }
                 )
-        return items
+        self._backup_list_cache = (now_ts, items)
+        return list(items)
 
     def get_status(self) -> dict[str, str]:
         return {

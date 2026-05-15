@@ -1,4 +1,4 @@
-﻿export type Row = Record<string, unknown>;
+export type Row = Record<string, unknown>;
 
 export type PanelData = {
   errors: string[];
@@ -24,6 +24,8 @@ export type PanelData = {
   unmatchedStock: Array<{ id: string; name: string; category: string; stock: number; price: number }>;
   byBranch: Array<{ branch: string; stableBranchKey: string; todayTotal: number; saleCount: number; customerCount: number; productCount: number; userCount: number }>;
   debug: {
+    buildVersion: string;
+    dropdownBranches: string[];
     apiCustomers: number;
     apiProducts: number;
     apiSales: number;
@@ -42,6 +44,9 @@ export type PanelData = {
 
 const TABLES = ["users", "customers", "products", "sales"] as const;
 const STABLE_BRANCH_KEYS = ["branch_id", "kasa_id", "profile_id", "cashier_id"] as const;
+const BUILD_VERSION = "branch-filter-debug-v3";
+const HUMAN_USER_LABEL_KEYS = ["display_name", "name", "full_name"] as const;
+const BLOCKED_DROPDOWN_VALUES = ["kasa_ops", "kasa_perf", "test", "seed", "demo"] as const;
 export type BranchOption = { key: string; label: string };
 type BranchGroup = { key: string; label: string; aliases: Set<string> };
 
@@ -118,7 +123,7 @@ function stableBranchAliases(row: Row): string[] {
 }
 
 function userBranchValue(row: Row): string {
-  return first(row, ["branch_id", "profile_id", "kasa_id"], "").trim() || first(row, ["username", "name"], "").trim();
+  return first(row, ["branch_id"], "").trim();
 }
 
 function userBranchKey(row: Row): string {
@@ -184,13 +189,22 @@ function todayKey(): string {
 export function isActive(row: Row): boolean {
   const archived = valueOf(row, "archived");
   const is_active = valueOf(row, "is_active");
-  return archived !== true && archived !== 1 && is_active !== false && is_active !== 0;
+  const archivedText = String(archived ?? "").trim().toLowerCase();
+  const activeText = String(is_active ?? "").trim().toLowerCase();
+  const archivedFlag = archived === true || archived === 1 || archivedText === "1" || archivedText === "true" || archivedText === "yes";
+  const inactiveFlag = is_active === false || is_active === 0 || activeText === "0" || activeText === "false" || activeText === "no";
+  return !archivedFlag && !inactiveFlag;
 }
 
 function isAdminLikeBranch(branch: string): boolean {
   const clean = normalizeBranch(branch);
   if (clean.includes("admin") || clean.includes("genel") || clean.includes("manager")) return true;
   return !clean || clean === "admin" || clean === "manager" || clean === "genel-kasa" || clean === "general" || clean === "yonetici" || clean === "yönetici";
+}
+
+function hasBlockedDropdownValue(value: string): boolean {
+  const clean = normalizeBranch(value).replace(/\s+/g, "_");
+  return BLOCKED_DROPDOWN_VALUES.some((blocked) => clean === blocked || clean.includes(blocked));
 }
 
 function aliasValues(value: string): string[] {
@@ -231,8 +245,12 @@ function branchKeyFromCandidates(candidates: string[]): string {
 }
 
 function isCashierUser(row: Row): boolean {
-  const role = first(row, ["user_type", "role", "type"], "").toLowerCase();
-  return isActive(row) && (role === "cashier" || role === "kasa");
+  const role = first(row, ["role", "user_type", "type"], "").toLowerCase();
+  const branchId = first(row, ["branch_id"], "").trim();
+  const label = first(row, HUMAN_USER_LABEL_KEYS, "").trim();
+  const blocked = ["username", "branch_id", "kasa_id", "profile_id", ...HUMAN_USER_LABEL_KEYS]
+    .some((key) => hasBlockedDropdownValue(first(row, [key], "")));
+  return isActive(row) && role === "cashier" && Boolean(branchId) && Boolean(label) && !blocked;
 }
 
 function actorId(row: Row): string {
@@ -258,7 +276,7 @@ function labelFromValue(value: string): string {
 }
 
 function labelForRow(row: Row, key: string): string {
-  return first(row, ["full_name", "name", "username", "display_name"], "") || labelFromValue(branchValueFromKey(key));
+  return first(row, HUMAN_USER_LABEL_KEYS, "") || labelFromValue(branchValueFromKey(key));
 }
 
 function uniqueBranchOptions(groups: BranchGroup[]): BranchOption[] {
@@ -284,11 +302,12 @@ function withStableBranch(row: Row): Row {
 }
 
 function buildBranchGroups(users: Row[]): { groups: BranchGroup[]; cashierIds: Set<string>; adminIds: Set<string> } {
+  const cashierUsers = users.filter(isCashierUser);
   const adminIds = new Set(users.filter((row) => !isCashierUser(row)).map(userId).filter(Boolean));
-  const cashierIds = new Set(users.filter(isCashierUser).map(userId).filter(Boolean));
+  const cashierIds = new Set(cashierUsers.map(userId).filter(Boolean));
   const groupsByKey = new Map<string, BranchGroup>();
 
-  for (const user of users.filter(isCashierUser)) {
+  for (const user of cashierUsers) {
     const key = userBranchKey(user);
     addGroup(groupsByKey, key, labelForRow(user, key), userBranchAliases(user));
   }
@@ -468,6 +487,8 @@ export async function loadPanelData(selectedBranch = ""): Promise<PanelData> {
       .filter((item) => !effectiveBranch || item.stableBranchKey === effectiveBranch)
       .sort((a, b) => a.branch.localeCompare(b.branch, "tr")),
     debug: {
+      buildVersion: BUILD_VERSION,
+      dropdownBranches: branches.map((branch) => branch.label),
       apiCustomers: customersResult.rows.length,
       apiProducts: productsResult.rows.length,
       apiSales: salesResult.rows.length,
@@ -494,7 +515,7 @@ export async function loadWritableBranches(): Promise<Array<{ branch: string; br
         branch,
         branchValue: branchValueFromKey(branch),
         cashierId: first(user, ["id", "cashier_id"], ""),
-        label: first(user, ["full_name", "name", "username"], branch)
+        label: first(user, HUMAN_USER_LABEL_KEYS, "")
       };
     })
     .filter((row) => row.branch && row.cashierId && !isAdminLikeBranch(row.branch));
