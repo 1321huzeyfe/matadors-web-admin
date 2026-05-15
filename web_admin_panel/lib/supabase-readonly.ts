@@ -26,6 +26,10 @@ export type PanelData = {
   debug: {
     buildVersion: string;
     dropdownBranches: string[];
+    rawUsersCount: number;
+    activeUsersCount: number;
+    cashierCandidates: CashierDebugRow[];
+    rejectedCashiers: Array<CashierDebugRow & { reason: string }>;
     apiCustomers: number;
     apiProducts: number;
     apiSales: number;
@@ -44,11 +48,21 @@ export type PanelData = {
 
 const TABLES = ["users", "customers", "products", "sales"] as const;
 const STABLE_BRANCH_KEYS = ["branch_id", "kasa_id", "profile_id", "cashier_id"] as const;
-const BUILD_VERSION = "branch-filter-debug-v4";
+const BUILD_VERSION = "branch-filter-debug-v5";
 const HUMAN_USER_LABEL_KEYS = ["display_name", "name", "full_name"] as const;
 const BLOCKED_DROPDOWN_VALUES = ["kasa_ops", "kasa_perf", "test", "seed", "demo"] as const;
 export type BranchOption = { key: string; label: string };
 type BranchGroup = { key: string; label: string; aliases: Set<string> };
+type CashierDebugRow = {
+  role: string;
+  username: string;
+  branch_id: string;
+  display_name: string;
+  name: string;
+  full_name: string;
+  archived: unknown;
+  is_active: unknown;
+};
 
 export function env(name: string): string {
   return (process.env[name] || "").trim();
@@ -212,6 +226,47 @@ function isDropdownBranchValue(value: string): boolean {
   return Boolean(clean) && !hasBlockedDropdownValue(clean) && !isAdminLikeBranch(clean);
 }
 
+function roleValue(row: Row): string {
+  return first(row, ["role", "user_type", "type"], "").toLowerCase();
+}
+
+function isCashierLikeRole(row: Row): boolean {
+  const role = roleValue(row);
+  return role === "cashier" || role === "kasa" || role.includes("cashier");
+}
+
+function hasBlockedCashierValue(row: Row): boolean {
+  return ["username", "branch_id", "kasa_id", "profile_id", ...HUMAN_USER_LABEL_KEYS]
+    .some((key) => hasBlockedDropdownValue(first(row, [key], "")));
+}
+
+function isCashierCandidate(row: Row): boolean {
+  const branchId = first(row, ["branch_id"], "").trim();
+  return isCashierLikeRole(row) || Boolean(branchId && !isAdminLikeBranch(branchId));
+}
+
+function cashierRejectReason(row: Row): string {
+  const branchId = first(row, ["branch_id"], "").trim();
+  if (!isActive(row)) return "inactive";
+  if (!isCashierCandidate(row)) return "wrong_role";
+  if (!branchId) return "no_branch_id";
+  if (!isDropdownBranchValue(branchId) || hasBlockedCashierValue(row)) return "blocked_value";
+  return "";
+}
+
+function cashierDebugRow(row: Row): CashierDebugRow {
+  return {
+    role: first(row, ["role", "user_type", "type"], ""),
+    username: first(row, ["username"], ""),
+    branch_id: first(row, ["branch_id"], ""),
+    display_name: first(row, ["display_name"], ""),
+    name: first(row, ["name"], ""),
+    full_name: first(row, ["full_name"], ""),
+    archived: valueOf(row, "archived") ?? null,
+    is_active: valueOf(row, "is_active") ?? null
+  };
+}
+
 function aliasValues(value: string): string[] {
   const clean = value.trim();
   if (!clean) return [];
@@ -250,11 +305,8 @@ function branchKeyFromCandidates(candidates: string[]): string {
 }
 
 function isCashierUser(row: Row): boolean {
-  const role = first(row, ["role", "user_type", "type"], "").toLowerCase();
   const branchId = first(row, ["branch_id"], "").trim();
-  const blocked = ["username", "branch_id", "kasa_id", "profile_id", ...HUMAN_USER_LABEL_KEYS]
-    .some((key) => hasBlockedDropdownValue(first(row, [key], "")));
-  return isActive(row) && role === "cashier" && isDropdownBranchValue(branchId) && !blocked;
+  return isActive(row) && isCashierCandidate(row) && isDropdownBranchValue(branchId) && !hasBlockedCashierValue(row);
 }
 
 function actorId(row: Row): string {
@@ -398,6 +450,11 @@ export async function loadPanelData(selectedBranch = ""): Promise<PanelData> {
   const errors = Array.from(new Set(
     [usersResult, customersResult, productsResult, salesResult].map((result) => result.error).filter(Boolean)
   ));
+  const cashierCandidateRows = usersResult.rows.filter(isCashierCandidate);
+  const rejectedCashiers = cashierCandidateRows
+    .map((row) => ({ ...cashierDebugRow(row), reason: cashierRejectReason(row) }))
+    .filter((row) => row.reason)
+    .slice(0, 10);
   const usersAllRaw = usersResult.rows.filter(isActive).map(withStableBranch);
   const customersRaw = customersResult.rows.filter(hasRealBranchId).map(withStableBranch);
   const productsRaw = productsResult.rows.filter(hasRealBranchId).map(withStableBranch);
@@ -493,6 +550,10 @@ export async function loadPanelData(selectedBranch = ""): Promise<PanelData> {
     debug: {
       buildVersion: BUILD_VERSION,
       dropdownBranches: branches.map((branch) => branch.label),
+      rawUsersCount: usersResult.rows.length,
+      activeUsersCount: usersAllRaw.length,
+      cashierCandidates: cashierCandidateRows.map(cashierDebugRow).slice(0, 10),
+      rejectedCashiers,
       apiCustomers: customersResult.rows.length,
       apiProducts: productsResult.rows.length,
       apiSales: salesResult.rows.length,

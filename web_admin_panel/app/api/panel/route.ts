@@ -39,8 +39,12 @@ export async function GET(request: NextRequest) {
       unmatchedStock: [],
       byBranch: [],
       debug: {
-        buildVersion: "branch-filter-debug-v4",
+        buildVersion: "branch-filter-debug-v5",
         dropdownBranches: [],
+        rawUsersCount: 0,
+        activeUsersCount: 0,
+        cashierCandidates: [],
+        rejectedCashiers: [],
         apiCustomers: 0,
         apiProducts: 0,
         apiSales: 0,
