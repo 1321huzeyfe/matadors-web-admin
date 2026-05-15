@@ -117,6 +117,33 @@ function stableBranchAliases(row: Row): string[] {
   return Array.from(new Set(aliases));
 }
 
+function userBranchValue(row: Row): string {
+  return first(row, ["branch_id", "profile_id", "kasa_id"], "").trim() || first(row, ["username", "name"], "").trim();
+}
+
+function userBranchKey(row: Row): string {
+  const value = userBranchValue(row);
+  return value && !isAdminLikeBranch(value) ? `branch_id:${value}` : "";
+}
+
+function userBranchAliases(row: Row): string[] {
+  const aliases = new Set(stableBranchAliases(row));
+  const value = userBranchValue(row);
+  if (value && !isAdminLikeBranch(value)) {
+    aliases.add(`branch_id:${value}`);
+    aliases.add(`profile_id:${value}`);
+    aliases.add(`kasa_id:${value}`);
+  }
+  const id = userId(row);
+  if (id) aliases.add(`cashier_id:${id}`);
+  return Array.from(aliases);
+}
+
+function hasRealBranchId(row: Row): boolean {
+  const value = first(row, ["branch_id"], "").trim();
+  return Boolean(value && !isAdminLikeBranch(value));
+}
+
 export function fallbackBranch(row: Row): string {
   return stableBranchKey(row) || "genel-kasa";
 }
@@ -256,19 +283,14 @@ function withStableBranch(row: Row): Row {
   return { ...row, stableBranchKey: stableBranchKey(row) };
 }
 
-function buildBranchGroups(users: Row[], dataRows: Row[]): { groups: BranchGroup[]; cashierIds: Set<string>; adminIds: Set<string> } {
+function buildBranchGroups(users: Row[]): { groups: BranchGroup[]; cashierIds: Set<string>; adminIds: Set<string> } {
   const adminIds = new Set(users.filter((row) => !isCashierUser(row)).map(userId).filter(Boolean));
   const cashierIds = new Set(users.filter(isCashierUser).map(userId).filter(Boolean));
   const groupsByKey = new Map<string, BranchGroup>();
 
   for (const user of users.filter(isCashierUser)) {
-    const key = stableBranchKey(user);
-    addGroup(groupsByKey, key, labelForRow(user, key), stableBranchAliases(user));
-  }
-
-  for (const row of dataRows.filter(isActive)) {
-    const key = stableBranchKey(row);
-    if (key && !adminIds.has(branchValueFromKey(key))) addGroup(groupsByKey, key, labelFromValue(branchValueFromKey(key)), stableBranchAliases(row));
+    const key = userBranchKey(user);
+    addGroup(groupsByKey, key, labelForRow(user, key), userBranchAliases(user));
   }
 
   return {
@@ -354,10 +376,10 @@ export async function loadPanelData(selectedBranch = ""): Promise<PanelData> {
     [usersResult, customersResult, productsResult, salesResult].map((result) => result.error).filter(Boolean)
   ));
   const usersAllRaw = usersResult.rows.filter(isActive).map(withStableBranch);
-  const customersRaw = customersResult.rows.map(withStableBranch);
-  const productsRaw = productsResult.rows.map(withStableBranch);
-  const salesRaw = salesResult.rows.map(withStableBranch);
-  const scope = buildBranchGroups(usersAllRaw, [...customersRaw, ...productsRaw, ...salesRaw]);
+  const customersRaw = customersResult.rows.filter(hasRealBranchId).map(withStableBranch);
+  const productsRaw = productsResult.rows.filter(hasRealBranchId).map(withStableBranch);
+  const salesRaw = salesResult.rows.filter(hasRealBranchId).map(withStableBranch);
+  const scope = buildBranchGroups(usersAllRaw);
   const activeGroup = selectedGroup(selectedBranch, scope.groups);
   const effectiveBranch = activeGroup?.key || "";
   const usersAll = usersAllRaw.filter((row) => isRealBranchRow(row, scope));
@@ -467,7 +489,7 @@ export async function loadWritableBranches(): Promise<Array<{ branch: string; br
   const users = (await select("users")).filter(isCashierUser);
   const rows = users
     .map((user) => {
-      const branch = stableBranchKey(user);
+      const branch = userBranchKey(user);
       return {
         branch,
         branchValue: branchValueFromKey(branch),
