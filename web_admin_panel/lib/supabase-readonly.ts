@@ -26,6 +26,12 @@ export type PanelData = {
   debug: {
     buildVersion: string;
     dropdownBranches: string[];
+    warning: string;
+    activeBranchKeys: string[];
+    blockedBranchKeys: string[];
+    inactiveBranchKeys: string[];
+    sampleCustomerBranchKeys: string[];
+    sampleProductBranchKeys: string[];
     rawUsersCount: number;
     activeUsersCount: number;
     cashierCandidates: CashierDebugRow[];
@@ -47,10 +53,10 @@ export type PanelData = {
 };
 
 const TABLES = ["users", "customers", "products", "sales"] as const;
-const STABLE_BRANCH_KEYS = ["branch_id", "kasa_id", "profile_id", "cashier_id"] as const;
-const BUILD_VERSION = "branch-filter-debug-v5";
+const STABLE_BRANCH_KEYS = ["branch_id", "kasa_id", "profile_id", "owner_id", "cashier_id", "user_id"] as const;
+const BUILD_VERSION = "branch-filter-debug-v6";
 const HUMAN_USER_LABEL_KEYS = ["display_name", "name", "full_name"] as const;
-const BLOCKED_DROPDOWN_VALUES = ["kasa_ops", "kasa_perf", "test", "seed", "demo"] as const;
+const BLOCKED_DROPDOWN_VALUES = ["test", "seed", "demo", "dev", "internal"] as const;
 export type BranchOption = { key: string; label: string };
 type BranchGroup = { key: string; label: string; aliases: Set<string> };
 type CashierDebugRow = {
@@ -154,13 +160,16 @@ function userBranchAliases(row: Row): string[] {
     aliases.add(`kasa_id:${value}`);
   }
   const id = userId(row);
-  if (id) aliases.add(`cashier_id:${id}`);
+  if (id) {
+    aliases.add(`cashier_id:${id}`);
+    aliases.add(`owner_id:${id}`);
+    aliases.add(`user_id:${id}`);
+  }
   return Array.from(aliases);
 }
 
 function hasRealBranchId(row: Row): boolean {
-  const value = first(row, ["branch_id"], "").trim();
-  return Boolean(value && !isAdminLikeBranch(value));
+  return Boolean(stableBranchKey(row));
 }
 
 export function fallbackBranch(row: Row): string {
@@ -217,8 +226,10 @@ function isAdminLikeBranch(branch: string): boolean {
 }
 
 function hasBlockedDropdownValue(value: string): boolean {
-  const clean = normalizeBranch(value).replace(/\s+/g, "_");
-  return BLOCKED_DROPDOWN_VALUES.some((blocked) => clean === blocked || clean.includes(blocked));
+  const clean = normalizeBranch(value).replace(/[^a-z0-9ığüşöç]+/gi, "_").replace(/^_+|_+$/g, "");
+  if (!clean) return false;
+  const tokens = clean.split("_").filter(Boolean);
+  return BLOCKED_DROPDOWN_VALUES.some((blocked) => clean === blocked || tokens.includes(blocked));
 }
 
 function isDropdownBranchValue(value: string): boolean {
@@ -236,8 +247,13 @@ function isCashierLikeRole(row: Row): boolean {
 }
 
 function hasBlockedCashierValue(row: Row): boolean {
-  return ["username", "branch_id", "kasa_id", "profile_id", ...HUMAN_USER_LABEL_KEYS]
+  return ["username", "branch_id", "kasa_id", "profile_id", "owner_id", "cashier_id", "user_id", ...HUMAN_USER_LABEL_KEYS]
     .some((key) => hasBlockedDropdownValue(first(row, [key], "")));
+}
+
+function blockedCashierField(row: Row): string {
+  return ["username", "branch_id", "kasa_id", "profile_id", "owner_id", "cashier_id", "user_id", ...HUMAN_USER_LABEL_KEYS]
+    .find((key) => hasBlockedDropdownValue(first(row, [key], ""))) || "";
 }
 
 function isCashierCandidate(row: Row): boolean {
@@ -250,7 +266,9 @@ function cashierRejectReason(row: Row): string {
   if (!isActive(row)) return "inactive";
   if (!isCashierCandidate(row)) return "wrong_role";
   if (!branchId) return "no_branch_id";
-  if (!isDropdownBranchValue(branchId) || hasBlockedCashierValue(row)) return "blocked_value";
+  const blockedField = blockedCashierField(row);
+  if (blockedField) return `blocked_${blockedField}`;
+  if (!isDropdownBranchValue(branchId)) return "blocked_branch_id";
   return "";
 }
 
@@ -406,7 +424,7 @@ function filterBranch(rows: Row[], group?: BranchGroup): Row[] {
 }
 
 function displayBranchForRow(row: Row, groups: BranchGroup[], activeGroup?: BranchGroup): string {
-  return matchingGroup(row, groups)?.label || activeGroup?.label || "";
+  return matchingGroup(row, groups)?.label || activeGroup?.label || labelFromValue(branchOf(row));
 }
 
 function ensureBranch(map: Map<string, PanelData["byBranch"][number]>, group: BranchGroup) {
@@ -460,14 +478,17 @@ export async function loadPanelData(selectedBranch = ""): Promise<PanelData> {
   const productsRaw = productsResult.rows.filter(hasRealBranchId).map(withStableBranch);
   const salesRaw = salesResult.rows.filter(hasRealBranchId).map(withStableBranch);
   const scope = buildBranchGroups(usersAllRaw);
+  const activeBranchKeys = scope.groups.map((group) => group.key);
+  const hasActiveBranches = activeBranchKeys.length > 0;
+  const warning = hasActiveBranches ? "" : "Aktif kasa bulunamadı, users tablosundaki cashier kayıtlarını kontrol edin.";
   const activeGroup = selectedGroup(selectedBranch, scope.groups);
   const effectiveBranch = activeGroup?.key || "";
-  const usersAll = usersAllRaw.filter((row) => isRealBranchRow(row, scope));
-  const customersAll = filterRealBranches(customersRaw, scope);
-  const productsAll = filterRealBranches(productsRaw, scope);
-  const salesAll = filterRealBranches(salesRaw, scope);
-  const unmatchedCustomers = filterUnmatchedRows(customersRaw, scope);
-  const unmatchedProducts = filterUnmatchedRows(productsRaw, scope);
+  const usersAll = hasActiveBranches ? usersAllRaw.filter((row) => isRealBranchRow(row, scope)) : usersAllRaw;
+  const customersAll = hasActiveBranches ? filterRealBranches(customersRaw, scope) : customersRaw.filter(isActive);
+  const productsAll = hasActiveBranches ? filterRealBranches(productsRaw, scope) : productsRaw.filter(isActive);
+  const salesAll = hasActiveBranches ? filterRealBranches(salesRaw, scope) : salesRaw.filter(isActive);
+  const unmatchedCustomers = hasActiveBranches ? filterUnmatchedRows(customersRaw, scope) : [];
+  const unmatchedProducts = hasActiveBranches ? filterUnmatchedRows(productsRaw, scope) : [];
 
   const users = filterBranch(usersAll, activeGroup);
   const customers = filterBranch(customersAll, activeGroup);
@@ -550,6 +571,20 @@ export async function loadPanelData(selectedBranch = ""): Promise<PanelData> {
     debug: {
       buildVersion: BUILD_VERSION,
       dropdownBranches: branches.map((branch) => branch.label),
+      warning,
+      activeBranchKeys,
+      blockedBranchKeys: cashierCandidateRows
+        .filter((row) => blockedCashierField(row))
+        .map((row) => userBranchKey(row) || stableBranchKey(row))
+        .filter(Boolean)
+        .slice(0, 10),
+      inactiveBranchKeys: cashierCandidateRows
+        .filter((row) => !isActive(row))
+        .map((row) => userBranchKey(row) || stableBranchKey(row))
+        .filter(Boolean)
+        .slice(0, 10),
+      sampleCustomerBranchKeys: customersRaw.map(stableBranchKey).filter(Boolean).slice(0, 10),
+      sampleProductBranchKeys: productsRaw.map(stableBranchKey).filter(Boolean).slice(0, 10),
       rawUsersCount: usersResult.rows.length,
       activeUsersCount: usersAllRaw.length,
       cashierCandidates: cashierCandidateRows.map(cashierDebugRow).slice(0, 10),
