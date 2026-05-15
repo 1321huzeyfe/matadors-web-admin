@@ -44,7 +44,7 @@ export type PanelData = {
 
 const TABLES = ["users", "customers", "products", "sales"] as const;
 const STABLE_BRANCH_KEYS = ["branch_id", "kasa_id", "profile_id", "cashier_id"] as const;
-const BUILD_VERSION = "branch-filter-debug-v3";
+const BUILD_VERSION = "branch-filter-debug-v4";
 const HUMAN_USER_LABEL_KEYS = ["display_name", "name", "full_name"] as const;
 const BLOCKED_DROPDOWN_VALUES = ["kasa_ops", "kasa_perf", "test", "seed", "demo"] as const;
 export type BranchOption = { key: string; label: string };
@@ -207,6 +207,11 @@ function hasBlockedDropdownValue(value: string): boolean {
   return BLOCKED_DROPDOWN_VALUES.some((blocked) => clean === blocked || clean.includes(blocked));
 }
 
+function isDropdownBranchValue(value: string): boolean {
+  const clean = value.trim();
+  return Boolean(clean) && !hasBlockedDropdownValue(clean) && !isAdminLikeBranch(clean);
+}
+
 function aliasValues(value: string): string[] {
   const clean = value.trim();
   if (!clean) return [];
@@ -247,10 +252,9 @@ function branchKeyFromCandidates(candidates: string[]): string {
 function isCashierUser(row: Row): boolean {
   const role = first(row, ["role", "user_type", "type"], "").toLowerCase();
   const branchId = first(row, ["branch_id"], "").trim();
-  const label = first(row, HUMAN_USER_LABEL_KEYS, "").trim();
   const blocked = ["username", "branch_id", "kasa_id", "profile_id", ...HUMAN_USER_LABEL_KEYS]
     .some((key) => hasBlockedDropdownValue(first(row, [key], "")));
-  return isActive(row) && role === "cashier" && Boolean(branchId) && Boolean(label) && !blocked;
+  return isActive(row) && role === "cashier" && isDropdownBranchValue(branchId) && !blocked;
 }
 
 function actorId(row: Row): string {
@@ -515,7 +519,7 @@ export async function loadWritableBranches(): Promise<Array<{ branch: string; br
         branch,
         branchValue: branchValueFromKey(branch),
         cashierId: first(user, ["id", "cashier_id"], ""),
-        label: first(user, HUMAN_USER_LABEL_KEYS, "")
+        label: labelForRow(user, branch)
       };
     })
     .filter((row) => row.branch && row.cashierId && !isAdminLikeBranch(row.branch));
