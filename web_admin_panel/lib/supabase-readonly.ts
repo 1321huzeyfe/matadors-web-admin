@@ -18,6 +18,7 @@ export type PanelData = {
   customers: Row[];
   products: Row[];
   sales: Row[];
+  branchManagement: BranchDeleteSummary[];
   balances: Array<{ name: string; branch: string; stableBranchKey: string; balance: number }>;
   stock: Array<{ id: string; name: string; category: string; branch: string; stableBranchKey: string; stock: number; price: number }>;
   unmatchedBalances: Array<{ name: string; balance: number }>;
@@ -63,10 +64,11 @@ export type PanelData = {
 
 const TABLES = ["users", "customers", "products", "sales"] as const;
 const STABLE_BRANCH_KEYS = ["branch_id", "kasa_id", "profile_id", "owner_id", "cashier_id", "user_id"] as const;
-const BUILD_VERSION = "branch-filter-debug-v8";
+const BUILD_VERSION = "branch-visibility-delete-v9";
 const HUMAN_USER_LABEL_KEYS = ["display_name", "name", "full_name"] as const;
 const SYSTEM_BRANCH_VALUES = ["kasa_ops", "kasa_perf", "ops", "perf", "performance", "benchmark", "loadtest", "test", "seed", "demo", "dev", "internal"] as const;
 export type BranchOption = { key: string; label: string };
+export type BranchDeleteSummary = { key: string; label: string; customers: number; products: number; sales: number; users: number };
 type BranchGroup = { key: string; label: string; aliases: Set<string> };
 type CashierDebugRow = {
   role: string;
@@ -141,7 +143,8 @@ function cleanBranchValue(value: unknown): string {
 }
 
 function branchKeyValue(value: unknown): string {
-  return cleanBranchValue(value).toLowerCase().replace(/\s+/g, "");
+  const clean = cleanBranchValue(value).toLowerCase().replace(/\s+/g, "");
+  return clean.startsWith("branch_id:") ? clean.slice("branch_id:".length) : clean;
 }
 
 function canonicalBranchKey(value: unknown): string {
@@ -246,7 +249,7 @@ function isAdminLikeBranch(branch: string): boolean {
   return !clean || clean === "admin" || clean === "manager" || clean === "genel-kasa" || clean === "general" || clean === "yonetici" || clean === "yönetici";
 }
 
-function isSystemBranchValue(value: string): boolean {
+export function isSystemBranchValue(value: string): boolean {
   const clean = normalizeBranch(value).replace(/[^a-z0-9ığüşöç]+/gi, "_").replace(/^_+|_+$/g, "");
   if (!clean) return false;
   const tokens = clean.split("_").filter(Boolean);
@@ -356,11 +359,11 @@ function userId(row: Row): string {
   return first(row, ["id", "cashier_id", "user_id"], "");
 }
 
-function branchValueFromKey(key: string): string {
+export function branchValueFromKey(key: string): string {
   return key.split(":").slice(1).join(":");
 }
 
-function labelFromValue(value: string): string {
+export function labelFromValue(value: string): string {
   const clean = value.trim();
   if (!clean) return "Kasa";
   const compact = clean.toLowerCase().replace(/[^a-z0-9ığüşöç]/gi, "");
@@ -420,6 +423,10 @@ function branchGroupsFromKeys(keys: string[], labelsByKey: Map<string, string>):
     addGroup(groupsByKey, key, labelsByKey.get(key) || labelFromValue(branchValueFromKey(key)), [key]);
   }
   return Array.from(groupsByKey.values()).sort((a, b) => a.label.localeCompare(b.label, "tr", { numeric: true }));
+}
+
+function countRowsForGroup(rows: Row[], group: BranchGroup): number {
+  return rows.filter((row) => matchingGroup(row, [group])).length;
 }
 
 function matchingGroup(row: Row, groups: BranchGroup[]): BranchGroup | undefined {
@@ -576,6 +583,14 @@ export async function loadPanelData(selectedBranch = ""): Promise<PanelData> {
   const today = todayKey();
   const todaySales = sales.filter((sale) => dateKey(saleDateRaw(sale)) === today);
   const branches = uniqueBranchOptions(visibleGroups);
+  const branchManagement = visibleGroups.map((group) => ({
+    key: group.key,
+    label: branches.find((branch) => branch.key === group.key)?.label || group.label,
+    customers: countRowsForGroup(customersRaw, group),
+    products: countRowsForGroup(productsRaw, group),
+    sales: countRowsForGroup(salesRaw, group),
+    users: usersResult.rows.filter((row) => userBranchAliases(row).some((alias) => normalizeBranch(alias) === normalizeBranch(group.key))).length
+  }));
 
   const byBranchMap = new Map<string, PanelData["byBranch"][number]>();
   for (const group of visibleGroups) ensureBranch(byBranchMap, group);
@@ -614,6 +629,7 @@ export async function loadPanelData(selectedBranch = ""): Promise<PanelData> {
     customers,
     products,
     sales: sales.sort((a, b) => saleDateRaw(b).localeCompare(saleDateRaw(a))).slice(0, 100),
+    branchManagement,
     balances: customers.map((customer) => ({
       name: first(customer, ["name", "full_name", "customer_name", "ad_soyad"], "-"),
       branch: displayBranchForRow(customer, visibleGroups, activeGroup),

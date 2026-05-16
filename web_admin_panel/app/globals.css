@@ -723,6 +723,78 @@ tbody tr:hover {
   margin-top: 24px;
 }
 
+.branch-management {
+  margin-bottom: 24px;
+}
+
+.branch-management-list {
+  display: grid;
+  gap: 12px;
+  padding: 0 18px 22px;
+}
+
+.branch-management-empty {
+  color: var(--muted);
+  font-weight: 760;
+  margin: 0;
+  padding: 8px 0;
+}
+
+.branch-row {
+  align-items: center;
+  background: var(--surface-soft);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: grid;
+  gap: 14px;
+  grid-template-columns: minmax(170px, 1fr) minmax(260px, 2fr) auto;
+  min-width: 0;
+  padding: 14px;
+}
+
+.branch-row-main,
+.branch-row-counts {
+  min-width: 0;
+}
+
+.branch-row-main strong {
+  color: var(--text);
+  display: block;
+  font-size: 15px;
+  font-weight: 900;
+  overflow-wrap: anywhere;
+}
+
+.branch-row-main span {
+  color: var(--muted);
+  display: block;
+  font-size: 12px;
+  font-weight: 760;
+  margin-top: 4px;
+  overflow-wrap: anywhere;
+}
+
+.branch-row-counts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.branch-row-counts span {
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: #475569;
+  font-size: 12px;
+  font-weight: 820;
+  padding: 5px 9px;
+}
+
+.branch-delete-button {
+  min-width: 112px;
+  padding: 0 16px;
+}
+
 .stock-tools {
   min-height: 0;
 }
@@ -791,6 +863,33 @@ tbody tr:hover {
   text-align: center;
 }
 
+.debug-details {
+  margin: 0 auto;
+  max-width: 920px;
+  padding-bottom: 12px;
+  text-align: center;
+}
+
+.debug-details summary {
+  color: #94a3b8;
+  cursor: pointer;
+  display: inline-flex;
+  font-size: 10px;
+  font-weight: 760;
+  list-style: none;
+  opacity: 0.58;
+  padding: 3px 8px;
+  user-select: none;
+}
+
+.debug-details summary::-webkit-details-marker {
+  display: none;
+}
+
+.debug-details[open] summary {
+  opacity: 0.86;
+}
+
 .error-box {
   background: var(--red-soft);
   border: 1px solid #fecaca;
@@ -808,13 +907,117 @@ tbody tr:hover {
   font-size: 12px;
   font-weight: 800;
   line-height: 1.45;
-  margin-bottom: 18px;
+  margin: 8px auto 0;
   max-height: 220px;
   overflow: auto;
   overflow-wrap: anywhere;
   padding: 8px 12px;
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+.modal-backdrop {
+  align-items: center;
+  background: rgba(15, 23, 42, 0.42);
+  display: flex;
+  inset: 0;
+  justify-content: center;
+  padding: 18px;
+  position: fixed;
+  z-index: 80;
+}
+
+.confirm-dialog {
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  box-shadow: var(--shadow-md);
+  display: grid;
+  gap: 16px;
+  max-height: min(720px, calc(100vh - 36px));
+  max-width: 560px;
+  overflow: auto;
+  padding: 24px;
+  width: min(100%, 560px);
+}
+
+.confirm-dialog h3 {
+  color: var(--text);
+  font-size: 22px;
+  font-weight: 900;
+  margin: 0;
+}
+
+.danger-copy {
+  background: var(--red-soft);
+  border: 1px solid #fecaca;
+  border-radius: 8px;
+  color: #991b1b;
+  font-size: 14px;
+  font-weight: 820;
+  line-height: 1.45;
+  margin: 0;
+  padding: 12px;
+}
+
+.delete-summary {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+}
+
+.delete-summary strong,
+.delete-summary > span {
+  overflow-wrap: anywhere;
+}
+
+.delete-summary > span,
+.delete-summary small {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 760;
+}
+
+.delete-summary dl {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin: 0;
+}
+
+.delete-summary dl div {
+  background: var(--surface-soft);
+  border-radius: 8px;
+  padding: 9px;
+}
+
+.delete-summary dt {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 820;
+}
+
+.delete-summary dd {
+  color: var(--text);
+  font-size: 18px;
+  font-weight: 900;
+  margin: 4px 0 0;
+}
+
+.confirm-label {
+  color: var(--muted);
+  display: grid;
+  font-size: 13px;
+  font-weight: 820;
+  gap: 8px;
+}
+
+.confirm-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
 }
 
 .login-shell {
@@ -985,6 +1188,14 @@ tbody tr:hover {
   .stock-tools-grid {
     grid-template-columns: 1fr;
   }
+
+  .branch-row {
+    grid-template-columns: 1fr;
+  }
+
+  .branch-delete-button {
+    width: 100%;
+  }
 }
 
 @media (max-width: 620px) {
@@ -1078,6 +1289,18 @@ tbody tr:hover {
   .debug-strip {
     font-size: 10.5px;
     max-height: 180px;
+  }
+
+  .confirm-dialog {
+    padding: 18px;
+  }
+
+  .delete-summary dl {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .confirm-actions {
+    flex-direction: column;
   }
 
   .table-frame {

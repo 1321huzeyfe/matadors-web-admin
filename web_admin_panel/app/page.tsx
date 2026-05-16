@@ -1,6 +1,7 @@
 ﻿import { branchOf, loadPanelData, Row } from "../lib/supabase-readonly";
 import { isPageAuthenticated } from "../lib/auth";
 import BranchFilter from "./branch-filter";
+import BranchManagement from "./branch-management";
 import LoginForm from "./login-form";
 import LogoutButton from "./logout-button";
 import ProductTools from "./product-tools";
@@ -230,10 +231,6 @@ export default async function Page({ searchParams }: { searchParams?: { branch?:
           </div>
         </header>
 
-        <section className="debug-strip">
-          buildVersion: {debug.buildVersion}, warnings: {JSON.stringify(debug.warnings)}, dataBranchKeys: {JSON.stringify(debug.dataBranchKeys)}, activeUserBranchKeys: {JSON.stringify(debug.activeUserBranchKeys)}, inactiveBranchKeys: {JSON.stringify(debug.inactiveBranchKeys)}, systemBranchKeys: {JSON.stringify(debug.systemBranchKeys)}, visibleBranchKeys: {JSON.stringify(debug.visibleBranchKeys)}, dropdownBranches: {JSON.stringify(debug.dropdownBranches)}, userBranchesWithoutData: {JSON.stringify(debug.userBranchesWithoutData)}, dataBranchesWithoutUser: {JSON.stringify(debug.dataBranchesWithoutUser)}, sampleCustomerBranchKeys: {JSON.stringify(debug.sampleCustomerBranchKeys)}, sampleProductBranchKeys: {JSON.stringify(debug.sampleProductBranchKeys)}, sampleSaleBranchKeys: {JSON.stringify(debug.sampleSaleBranchKeys)}, customers before/after: {numberText(debug.customersBefore)}/{numberText(debug.customersAfter)}, products before/after: {numberText(debug.productsBefore)}/{numberText(debug.productsAfter)}, sales before/after: {numberText(debug.salesBefore)}/{numberText(debug.salesAfter)}, selectedKey: {debug.selectedKey}
-        </section>
-
         {data.errors.length > 0 && (
           <section className="error-box">
             Veri alınamadı. Supabase bağlantısını kontrol edin.
@@ -246,6 +243,8 @@ export default async function Page({ searchParams }: { searchParams?: { branch?:
           <StatCard tone="purple" icon="box" label="Toplam Ürün" value={numberText(pageSummary.productCount)} hint="Stoktaki ürün sayısı" />
           <StatCard tone="orange" icon="moves" label="Toplam Stok" value={numberText(pageSummary.totalStock)} hint="Tüm ürün stokları" />
         </section>
+
+        <BranchManagement branches={data.branchManagement} />
 
         <section className="panel-grid primary-panels">
           <article id="customers" className="panel data-panel">
@@ -371,6 +370,12 @@ export default async function Page({ searchParams }: { searchParams?: { branch?:
         </section>
 
         <footer className="page-footer">© 2025 Matadors App. Tüm hakları saklıdır.</footer>
+        <details className="debug-details">
+          <summary aria-label="Debug bilgilerini göster">debug</summary>
+          <section className="debug-strip">
+            buildVersion: {debug.buildVersion}, warnings: {JSON.stringify(debug.warnings)}, dataBranchKeys: {JSON.stringify(debug.dataBranchKeys)}, activeUserBranchKeys: {JSON.stringify(debug.activeUserBranchKeys)}, inactiveBranchKeys: {JSON.stringify(debug.inactiveBranchKeys)}, systemBranchKeys: {JSON.stringify(debug.systemBranchKeys)}, visibleBranchKeys: {JSON.stringify(debug.visibleBranchKeys)}, dropdownBranches: {JSON.stringify(debug.dropdownBranches)}, userBranchesWithoutData: {JSON.stringify(debug.userBranchesWithoutData)}, dataBranchesWithoutUser: {JSON.stringify(debug.dataBranchesWithoutUser)}, sampleCustomerBranchKeys: {JSON.stringify(debug.sampleCustomerBranchKeys)}, sampleProductBranchKeys: {JSON.stringify(debug.sampleProductBranchKeys)}, sampleSaleBranchKeys: {JSON.stringify(debug.sampleSaleBranchKeys)}, customers before/after: {numberText(debug.customersBefore)}/{numberText(debug.customersAfter)}, products before/after: {numberText(debug.productsBefore)}/{numberText(debug.productsAfter)}, sales before/after: {numberText(debug.salesBefore)}/{numberText(debug.salesAfter)}, selectedKey: {debug.selectedKey}
+          </section>
+        </details>
       </main>
     </div>
   );
