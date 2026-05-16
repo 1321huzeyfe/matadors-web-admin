@@ -38,6 +38,7 @@ body {
   font-family: Inter, Geist, "Segoe UI", Arial, sans-serif;
   margin: 0;
   min-height: 100vh;
+  overflow-x: hidden;
 }
 
 a {
@@ -71,6 +72,7 @@ p {
 .admin-layout {
   animation: fadeIn 0.28s ease both;
   min-height: 100vh;
+  min-width: 0;
   padding-left: 288px;
 }
 
@@ -229,6 +231,7 @@ p {
 .content-shell {
   margin: 0 auto;
   max-width: 1620px;
+  min-width: 0;
   padding: 24px 32px 38px;
 }
 
@@ -243,11 +246,13 @@ p {
   justify-content: space-between;
   margin-bottom: 24px;
   min-height: 98px;
+  min-width: 0;
   padding: 20px 28px;
 }
 
 .overview-title {
   min-width: 250px;
+  overflow-wrap: anywhere;
 }
 
 .overview-title h1 {
@@ -288,6 +293,7 @@ p {
   align-items: flex-end;
   display: flex;
   gap: 14px;
+  min-width: 0;
 }
 
 .select-field {
@@ -296,6 +302,7 @@ p {
   font-size: 12px;
   font-weight: 760;
   gap: 4px;
+  min-width: 0;
 }
 
 select,
@@ -312,6 +319,8 @@ select,
 
 select {
   min-width: 260px;
+  max-width: 100%;
+  text-overflow: ellipsis;
 }
 
 select:focus,
@@ -402,6 +411,7 @@ select:focus,
   display: flex;
   gap: 20px;
   min-height: 138px;
+  min-width: 0;
   padding: 24px;
   transition: box-shadow 0.18s ease, transform 0.18s ease, border-color 0.18s ease;
 }
@@ -797,8 +807,14 @@ tbody tr:hover {
   color: #1e3a5f;
   font-size: 12px;
   font-weight: 800;
+  line-height: 1.45;
   margin-bottom: 18px;
+  max-height: 220px;
+  overflow: auto;
+  overflow-wrap: anywhere;
   padding: 8px 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 .login-shell {
@@ -940,12 +956,23 @@ tbody tr:hover {
   .overview-card {
     align-items: stretch;
     flex-direction: column;
+    gap: 18px;
+    padding: 18px;
+  }
+
+  .overview-title {
+    min-width: 0;
   }
 
   .topbar-actions,
   .toolbar-form {
     align-items: stretch;
     flex-wrap: wrap;
+  }
+
+  .topbar-actions > * {
+    flex: 1 1 180px;
+    min-width: 0;
   }
 
   select {
@@ -962,7 +989,24 @@ tbody tr:hover {
 
 @media (max-width: 620px) {
   .content-shell {
-    padding: 14px;
+    padding: 12px;
+  }
+
+  .sidebar {
+    padding: 12px;
+  }
+
+  .brand {
+    gap: 10px;
+    min-width: 0;
+  }
+
+  .brand strong {
+    font-size: 16px;
+  }
+
+  .brand span {
+    font-size: 12px;
   }
 
   .overview-card,
@@ -972,9 +1016,14 @@ tbody tr:hover {
     border-radius: 9px;
   }
 
+  .overview-title h1 {
+    font-size: 22px;
+  }
+
   .topbar-actions,
   .toolbar-form {
     flex-direction: column;
+    gap: 10px;
   }
 
   .button,
@@ -985,6 +1034,7 @@ tbody tr:hover {
 
   .button {
     min-height: 48px;
+    padding: 0 14px;
   }
 
   .button-row,
@@ -1001,6 +1051,33 @@ tbody tr:hover {
     align-items: flex-start;
     flex-direction: column;
     gap: 14px;
+    padding-left: 18px;
+    padding-right: 18px;
+  }
+
+  .metrics {
+    gap: 12px;
+  }
+
+  .stat-card {
+    gap: 14px;
+    min-height: 112px;
+    padding: 18px;
+  }
+
+  .stat-icon {
+    flex-basis: 50px;
+    height: 50px;
+    width: 50px;
+  }
+
+  .stat-copy strong {
+    font-size: 24px;
+  }
+
+  .debug-strip {
+    font-size: 10.5px;
+    max-height: 180px;
   }
 
   .table-frame {

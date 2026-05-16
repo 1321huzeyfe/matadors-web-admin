@@ -27,11 +27,18 @@ export type PanelData = {
     buildVersion: string;
     dropdownBranches: string[];
     warning: string;
+    warnings: string[];
+    dataBranchKeys: string[];
     activeBranchKeys: string[];
-    blockedBranchKeys: string[];
+    activeUserBranchKeys: string[];
+    systemBranchKeys: string[];
     inactiveBranchKeys: string[];
+    visibleBranchKeys: string[];
+    userBranchesWithoutData: string[];
+    dataBranchesWithoutUser: string[];
     sampleCustomerBranchKeys: string[];
     sampleProductBranchKeys: string[];
+    sampleSaleBranchKeys: string[];
     rawUsersCount: number;
     activeUsersCount: number;
     cashierCandidates: CashierDebugRow[];
@@ -47,6 +54,8 @@ export type PanelData = {
     customersAfter: number;
     productsBefore: number;
     productsAfter: number;
+    salesBefore: number;
+    salesAfter: number;
     unmatchedCustomers: number;
     unmatchedProducts: number;
   };
@@ -54,9 +63,9 @@ export type PanelData = {
 
 const TABLES = ["users", "customers", "products", "sales"] as const;
 const STABLE_BRANCH_KEYS = ["branch_id", "kasa_id", "profile_id", "owner_id", "cashier_id", "user_id"] as const;
-const BUILD_VERSION = "branch-filter-debug-v6";
+const BUILD_VERSION = "branch-filter-debug-v8";
 const HUMAN_USER_LABEL_KEYS = ["display_name", "name", "full_name"] as const;
-const BLOCKED_DROPDOWN_VALUES = ["test", "seed", "demo", "dev", "internal"] as const;
+const SYSTEM_BRANCH_VALUES = ["kasa_ops", "kasa_perf", "ops", "perf", "performance", "benchmark", "loadtest", "test", "seed", "demo", "dev", "internal"] as const;
 export type BranchOption = { key: string; label: string };
 type BranchGroup = { key: string; label: string; aliases: Set<string> };
 type CashierDebugRow = {
@@ -124,10 +133,26 @@ export function branchOf(row: Row): string {
   return first(row, STABLE_BRANCH_KEYS);
 }
 
+function cleanBranchValue(value: unknown): string {
+  const clean = stringValue(value).trim();
+  const lowered = clean.toLowerCase();
+  if (!clean || lowered === "null" || lowered === "undefined") return "";
+  return clean.replace(/\s+/g, " ");
+}
+
+function branchKeyValue(value: unknown): string {
+  return cleanBranchValue(value).toLowerCase().replace(/\s+/g, "");
+}
+
+function canonicalBranchKey(value: unknown): string {
+  const clean = branchKeyValue(value);
+  return clean && !isAdminLikeBranch(clean) ? `branch_id:${clean}` : "";
+}
+
 function stableBranchKey(row: Row): string {
   for (const field of STABLE_BRANCH_KEYS) {
-    const value = first(row, [field], "").trim();
-    if (value && !isAdminLikeBranch(value)) return `${field}:${value}`;
+    const key = canonicalBranchKey(valueOf(row, field));
+    if (key) return key;
   }
   return "";
 }
@@ -135,35 +160,31 @@ function stableBranchKey(row: Row): string {
 function stableBranchAliases(row: Row): string[] {
   const aliases = STABLE_BRANCH_KEYS
     .map((field) => {
-      const value = first(row, [field], "").trim();
-      return value && !isAdminLikeBranch(value) ? `${field}:${value}` : "";
+      return canonicalBranchKey(valueOf(row, field));
     })
     .filter(Boolean);
   return Array.from(new Set(aliases));
 }
 
 function userBranchValue(row: Row): string {
-  return first(row, ["branch_id"], "").trim();
+  return cleanBranchValue(valueOf(row, "branch_id"));
 }
 
 function userBranchKey(row: Row): string {
-  const value = userBranchValue(row);
-  return value && !isAdminLikeBranch(value) ? `branch_id:${value}` : "";
+  return canonicalBranchKey(userBranchValue(row));
 }
 
 function userBranchAliases(row: Row): string[] {
   const aliases = new Set(stableBranchAliases(row));
   const value = userBranchValue(row);
   if (value && !isAdminLikeBranch(value)) {
-    aliases.add(`branch_id:${value}`);
-    aliases.add(`profile_id:${value}`);
-    aliases.add(`kasa_id:${value}`);
+    const key = canonicalBranchKey(value);
+    if (key) aliases.add(key);
   }
   const id = userId(row);
   if (id) {
-    aliases.add(`cashier_id:${id}`);
-    aliases.add(`owner_id:${id}`);
-    aliases.add(`user_id:${id}`);
+    const idKey = canonicalBranchKey(id);
+    if (idKey) aliases.add(idKey);
   }
   return Array.from(aliases);
 }
@@ -225,16 +246,16 @@ function isAdminLikeBranch(branch: string): boolean {
   return !clean || clean === "admin" || clean === "manager" || clean === "genel-kasa" || clean === "general" || clean === "yonetici" || clean === "yönetici";
 }
 
-function hasBlockedDropdownValue(value: string): boolean {
+function isSystemBranchValue(value: string): boolean {
   const clean = normalizeBranch(value).replace(/[^a-z0-9ığüşöç]+/gi, "_").replace(/^_+|_+$/g, "");
   if (!clean) return false;
   const tokens = clean.split("_").filter(Boolean);
-  return BLOCKED_DROPDOWN_VALUES.some((blocked) => clean === blocked || tokens.includes(blocked));
+  return SYSTEM_BRANCH_VALUES.some((blocked) => clean === blocked || tokens.includes(blocked));
 }
 
 function isDropdownBranchValue(value: string): boolean {
   const clean = value.trim();
-  return Boolean(clean) && !hasBlockedDropdownValue(clean) && !isAdminLikeBranch(clean);
+  return Boolean(clean) && !isSystemBranchValue(clean) && !isAdminLikeBranch(clean);
 }
 
 function roleValue(row: Row): string {
@@ -248,12 +269,12 @@ function isCashierLikeRole(row: Row): boolean {
 
 function hasBlockedCashierValue(row: Row): boolean {
   return ["username", "branch_id", "kasa_id", "profile_id", "owner_id", "cashier_id", "user_id", ...HUMAN_USER_LABEL_KEYS]
-    .some((key) => hasBlockedDropdownValue(first(row, [key], "")));
+    .some((key) => isSystemBranchValue(first(row, [key], "")));
 }
 
 function blockedCashierField(row: Row): string {
   return ["username", "branch_id", "kasa_id", "profile_id", "owner_id", "cashier_id", "user_id", ...HUMAN_USER_LABEL_KEYS]
-    .find((key) => hasBlockedDropdownValue(first(row, [key], ""))) || "";
+    .find((key) => isSystemBranchValue(first(row, [key], ""))) || "";
 }
 
 function isCashierCandidate(row: Row): boolean {
@@ -393,6 +414,14 @@ function buildBranchGroups(users: Row[]): { groups: BranchGroup[]; cashierIds: S
   };
 }
 
+function branchGroupsFromKeys(keys: string[], labelsByKey: Map<string, string>): BranchGroup[] {
+  const groupsByKey = new Map<string, BranchGroup>();
+  for (const key of keys) {
+    addGroup(groupsByKey, key, labelsByKey.get(key) || labelFromValue(branchValueFromKey(key)), [key]);
+  }
+  return Array.from(groupsByKey.values()).sort((a, b) => a.label.localeCompare(b.label, "tr", { numeric: true }));
+}
+
 function matchingGroup(row: Row, groups: BranchGroup[]): BranchGroup | undefined {
   const normalized = new Set(stableBranchAliases(row).map(normalizeBranch));
   if (normalized.size === 0) return undefined;
@@ -477,43 +506,89 @@ export async function loadPanelData(selectedBranch = ""): Promise<PanelData> {
   const customersRaw = customersResult.rows.filter(hasRealBranchId).map(withStableBranch);
   const productsRaw = productsResult.rows.filter(hasRealBranchId).map(withStableBranch);
   const salesRaw = salesResult.rows.filter(hasRealBranchId).map(withStableBranch);
-  const scope = buildBranchGroups(usersAllRaw);
-  const activeBranchKeys = scope.groups.map((group) => group.key);
-  const hasActiveBranches = activeBranchKeys.length > 0;
-  const warning = hasActiveBranches ? "" : "Aktif kasa bulunamadı, users tablosundaki cashier kayıtlarını kontrol edin.";
-  const activeGroup = selectedGroup(selectedBranch, scope.groups);
-  const effectiveBranch = activeGroup?.key || "";
-  const usersAll = hasActiveBranches ? usersAllRaw.filter((row) => isRealBranchRow(row, scope)) : usersAllRaw;
-  const customersAll = hasActiveBranches ? filterRealBranches(customersRaw, scope) : customersRaw.filter(isActive);
-  const productsAll = hasActiveBranches ? filterRealBranches(productsRaw, scope) : productsRaw.filter(isActive);
-  const salesAll = hasActiveBranches ? filterRealBranches(salesRaw, scope) : salesRaw.filter(isActive);
-  const unmatchedCustomers = hasActiveBranches ? filterUnmatchedRows(customersRaw, scope) : [];
-  const unmatchedProducts = hasActiveBranches ? filterUnmatchedRows(productsRaw, scope) : [];
+  const activeCustomersRaw = customersRaw.filter(isActive);
+  const activeProductsRaw = productsRaw.filter(isActive);
+  const activeSalesRaw = salesRaw.filter(isActive);
+  const labelsByKey = new Map<string, string>();
+  const dataBranchKeySet = new Set<string>();
 
-  const users = filterBranch(usersAll, activeGroup);
-  const customers = filterBranch(customersAll, activeGroup);
-  const products = filterBranch(productsAll, activeGroup);
-  const sales = filterBranch(salesAll, activeGroup);
+  for (const row of [...activeCustomersRaw, ...activeProductsRaw, ...activeSalesRaw]) {
+    const key = stableBranchKey(row);
+    if (!key) continue;
+    dataBranchKeySet.add(key);
+    if (!labelsByKey.has(key)) labelsByKey.set(key, labelFromValue(branchValueFromKey(key)));
+  }
+
+  const dataBranchKeys = Array.from(dataBranchKeySet).sort();
+  const systemBranchKeys = Array.from(new Set(cashierCandidateRows
+    .filter(hasBlockedCashierValue)
+    .map((row) => userBranchKey(row) || stableBranchKey(row))
+    .filter(Boolean))).sort();
+  const inactiveBranchKeys = Array.from(new Set(cashierCandidateRows
+    .filter((row) => !isActive(row))
+    .map((row) => userBranchKey(row) || stableBranchKey(row))
+    .filter(Boolean))).sort();
+  const activeUserBranchKeys = Array.from(new Set(cashierCandidateRows
+    .filter((row) => isActive(row) && !hasBlockedCashierValue(row) && isDropdownBranchValue(userBranchValue(row)))
+    .map(userBranchKey)
+    .filter(Boolean))).sort();
+
+  for (const user of cashierCandidateRows) {
+    const key = userBranchKey(user);
+    if (key && !labelsByKey.has(key)) labelsByKey.set(key, labelForRow(user, key));
+  }
+
+  const systemBranchSet = new Set(systemBranchKeys);
+  const inactiveBranchSet = new Set(inactiveBranchKeys);
+  const visibleBranchKeys = Array.from(new Set([...dataBranchKeys, ...activeUserBranchKeys]))
+    .filter((key) => key && !systemBranchSet.has(key) && !inactiveBranchSet.has(key) && isDropdownBranchValue(branchValueFromKey(key)))
+    .sort();
+  const userBranchKeys = Array.from(new Set([...activeUserBranchKeys, ...systemBranchKeys, ...inactiveBranchKeys])).sort();
+  const userBranchKeySet = new Set(userBranchKeys);
+  const dataBranchKeyLookup = new Set(dataBranchKeys);
+  const userBranchesWithoutData = userBranchKeys.filter((key) => !dataBranchKeyLookup.has(key));
+  const dataBranchesWithoutUser = dataBranchKeys.filter((key) => !userBranchKeySet.has(key));
+  const warnings: string[] = [];
+  if (visibleBranchKeys.length === 0) warnings.push("visibleBranchKeys empty; check branch classification.");
+
+  const visibleGroups = branchGroupsFromKeys(visibleBranchKeys, labelsByKey);
+  const scope = { groups: visibleGroups, cashierIds: new Set<string>(), adminIds: new Set<string>() };
+  const activeGroup = selectedGroup(selectedBranch, visibleGroups);
+  const requestedSelectedKey = selectedBranch ? normalizeBranch(selectedBranch) : "";
+  const selectedIsBlocked = Boolean(requestedSelectedKey && (systemBranchSet.has(requestedSelectedKey) || inactiveBranchSet.has(requestedSelectedKey)));
+  if (selectedIsBlocked) warnings.push("Selected branch is inactive or system-owned; data hidden.");
+  const effectiveBranch = activeGroup?.key || (selectedIsBlocked ? selectedBranch : "");
+  const visibleBranchSet = new Set(visibleBranchKeys.map(normalizeBranch));
+  const rowInVisibleBranch = (row: Row) => visibleBranchSet.has(normalizeBranch(stableBranchKey(row)));
+  const rowInSelectedBranch = (row: Row) => activeGroup ? matchingGroup(row, [activeGroup]) : false;
+
+  const usersAll = usersAllRaw.filter((row) => visibleBranchSet.has(normalizeBranch(stableBranchKey(row))));
+  const customersAll = selectedIsBlocked ? [] : (visibleBranchKeys.length > 0 ? activeCustomersRaw.filter(rowInVisibleBranch) : activeCustomersRaw);
+  const productsAll = selectedIsBlocked ? [] : (visibleBranchKeys.length > 0 ? activeProductsRaw.filter(rowInVisibleBranch) : activeProductsRaw);
+  const salesAll = selectedIsBlocked ? [] : (visibleBranchKeys.length > 0 ? activeSalesRaw.filter(rowInVisibleBranch) : activeSalesRaw);
+  const unmatchedCustomers = visibleBranchKeys.length > 0 ? activeCustomersRaw.filter((row) => !rowInVisibleBranch(row)) : [];
+  const unmatchedProducts = visibleBranchKeys.length > 0 ? activeProductsRaw.filter((row) => !rowInVisibleBranch(row)) : [];
+
+  const users = activeGroup ? usersAll.filter(rowInSelectedBranch) : usersAll;
+  const customers = activeGroup ? customersAll.filter(rowInSelectedBranch) : customersAll;
+  const products = activeGroup ? productsAll.filter(rowInSelectedBranch) : productsAll;
+  const sales = activeGroup ? salesAll.filter(rowInSelectedBranch) : salesAll;
   const today = todayKey();
   const todaySales = sales.filter((sale) => dateKey(saleDateRaw(sale)) === today);
-  const branches = uniqueBranchOptions(scope.groups);
+  const branches = uniqueBranchOptions(visibleGroups);
 
   const byBranchMap = new Map<string, PanelData["byBranch"][number]>();
-  for (const group of scope.groups) ensureBranch(byBranchMap, group);
-  for (const user of usersAll) {
-    const group = matchingGroup(user, scope.groups);
-    if (group) ensureBranch(byBranchMap, group).userCount += 1;
-  }
+  for (const group of visibleGroups) ensureBranch(byBranchMap, group);
   for (const customer of customersAll) {
-    const group = matchingGroup(customer, scope.groups);
+    const group = matchingGroup(customer, visibleGroups);
     if (group) ensureBranch(byBranchMap, group).customerCount += 1;
   }
   for (const product of productsAll) {
-    const group = matchingGroup(product, scope.groups);
+    const group = matchingGroup(product, visibleGroups);
     if (group) ensureBranch(byBranchMap, group).productCount += 1;
   }
   for (const sale of salesAll.filter((item) => dateKey(saleDateRaw(item)) === today)) {
-    const group = matchingGroup(sale, scope.groups);
+    const group = matchingGroup(sale, visibleGroups);
     if (group) {
       const item = ensureBranch(byBranchMap, group);
       item.saleCount += 1;
@@ -541,7 +616,7 @@ export async function loadPanelData(selectedBranch = ""): Promise<PanelData> {
     sales: sales.sort((a, b) => saleDateRaw(b).localeCompare(saleDateRaw(a))).slice(0, 100),
     balances: customers.map((customer) => ({
       name: first(customer, ["name", "full_name", "customer_name", "ad_soyad"], "-"),
-      branch: displayBranchForRow(customer, scope.groups, activeGroup),
+      branch: displayBranchForRow(customer, visibleGroups, activeGroup),
       stableBranchKey: stableBranchKey(customer),
       balance: balance(customer)
     })).sort((a, b) => a.name.localeCompare(b.name, "tr")).slice(0, 200),
@@ -549,7 +624,7 @@ export async function loadPanelData(selectedBranch = ""): Promise<PanelData> {
       id: first(product, ["id"], ""),
       name: first(product, ["name", "product_name", "title", "urun_adi"], "-"),
       category: first(product, ["category", "kategori"], ""),
-      branch: displayBranchForRow(product, scope.groups, activeGroup),
+      branch: displayBranchForRow(product, visibleGroups, activeGroup),
       stableBranchKey: stableBranchKey(product),
       stock: stock(product),
       price: price(product)
@@ -570,21 +645,20 @@ export async function loadPanelData(selectedBranch = ""): Promise<PanelData> {
       .sort((a, b) => a.branch.localeCompare(b.branch, "tr")),
     debug: {
       buildVersion: BUILD_VERSION,
+      dataBranchKeys,
+      activeUserBranchKeys,
+      inactiveBranchKeys,
+      systemBranchKeys,
+      visibleBranchKeys,
       dropdownBranches: branches.map((branch) => branch.label),
-      warning,
-      activeBranchKeys,
-      blockedBranchKeys: cashierCandidateRows
-        .filter((row) => blockedCashierField(row))
-        .map((row) => userBranchKey(row) || stableBranchKey(row))
-        .filter(Boolean)
-        .slice(0, 10),
-      inactiveBranchKeys: cashierCandidateRows
-        .filter((row) => !isActive(row))
-        .map((row) => userBranchKey(row) || stableBranchKey(row))
-        .filter(Boolean)
-        .slice(0, 10),
+      warning: warnings[0] || "",
+      warnings,
+      activeBranchKeys: visibleBranchKeys,
+      userBranchesWithoutData,
+      dataBranchesWithoutUser,
       sampleCustomerBranchKeys: customersRaw.map(stableBranchKey).filter(Boolean).slice(0, 10),
       sampleProductBranchKeys: productsRaw.map(stableBranchKey).filter(Boolean).slice(0, 10),
+      sampleSaleBranchKeys: salesRaw.map(stableBranchKey).filter(Boolean).slice(0, 10),
       rawUsersCount: usersResult.rows.length,
       activeUsersCount: usersAllRaw.length,
       cashierCandidates: cashierCandidateRows.map(cashierDebugRow).slice(0, 10),
@@ -600,6 +674,8 @@ export async function loadPanelData(selectedBranch = ""): Promise<PanelData> {
       customersAfter: customers.length,
       productsBefore: productsRaw.filter(isActive).length,
       productsAfter: products.length,
+      salesBefore: salesRaw.filter(isActive).length,
+      salesAfter: sales.length,
       unmatchedCustomers: unmatchedCustomers.length,
       unmatchedProducts: unmatchedProducts.length
     }
