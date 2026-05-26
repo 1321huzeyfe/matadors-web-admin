@@ -349,6 +349,15 @@ select:focus,
   gap: 10px;
 }
 
+.button-row.compact {
+  gap: 8px;
+}
+
+.button-row.compact .button {
+  min-height: 36px;
+  padding: 0 12px;
+}
+
 .button:hover {
   transform: translateY(-1px);
 }
@@ -882,11 +891,33 @@ tbody tr:hover {
   gap: 8px;
 }
 
+.product-management-table {
+  margin: 0 18px;
+}
+
+.product-management-table input {
+  border: 1px solid #d7dfeb;
+  border-radius: 6px;
+  color: #0f172a;
+  font: inherit;
+  min-height: 36px;
+  padding: 8px 10px;
+  width: 100%;
+}
+
+.product-management-table .numeric input {
+  text-align: right;
+}
+
 .form-message {
   color: var(--blue-dark);
   font-weight: 800;
   margin: 0;
   padding: 0 20px 20px;
+}
+
+.form-message.inline {
+  padding: 0;
 }
 
 .mini-card {

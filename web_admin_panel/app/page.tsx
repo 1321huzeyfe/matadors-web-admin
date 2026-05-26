@@ -235,9 +235,9 @@ export default async function Page({ searchParams }: { searchParams?: { branch?:
           </section>
         )}
 
-        <section className="readonly-notice" aria-label="Salt okunur panel bilgisi">
-          <strong>Salt okunur mod</strong>
-          <span>Web panel salt-okunur modda çalışır. Veri yönetimi masaüstü uygulamadan yapılır.</span>
+        <section className="readonly-notice" aria-label="Ürün yönetimi panel bilgisi">
+          <strong>Ürün yönetimi</strong>
+          <span>Bu panelde ürün ekleme ve stok/fiyat düzenleme yapılabilir. Kasa silme ve destructive işlemler masaüstü uygulamadan yapılır.</span>
         </section>
 
         <section className="metrics" aria-label="Özet kartları">
@@ -249,7 +249,7 @@ export default async function Page({ searchParams }: { searchParams?: { branch?:
 
         <BranchManagement branches={data.branchManagement} />
 
-        <ProductTools branch={pageActiveBranch} products={filteredStock} />
+        <ProductTools branch={pageActiveBranch} products={filteredStock} branches={pageBranches} />
 
         <section className="panel-grid primary-panels">
           <article id="customers" className="panel data-panel">
@@ -287,35 +287,6 @@ export default async function Page({ searchParams }: { searchParams?: { branch?:
             </footer>
           </article>
 
-          <article id="products" className="panel data-panel">
-            <div className="panel-heading">
-              <div className="panel-title">
-                <span className="panel-icon purple"><Icon name="box" /></span>
-                <h2>Ürün Stokları</h2>
-              </div>
-              <a className="view-all" href="#products">Tümünü Gör <Icon name="chevron" /></a>
-            </div>
-            <div className="table-frame">
-              <table>
-                <thead><tr><th>Ürün</th><th>Kasa</th><th className="numeric">Stok</th><th className="numeric">Fiyat</th></tr></thead>
-                <tbody>
-                  {visibleStock.length === 0 && <tr><td className="empty" colSpan={4}>Kayıt yok</td></tr>}
-                  {visibleStock.map((product) => (
-                    <tr key={`${product.stableBranchKey}-${product.name}`}>
-                      <td data-label="Ürün" className="strong-cell">{product.name}</td>
-                      <td data-label="Kasa">{branchLabel(product.branch || "genel-kasa")}</td>
-                      <td data-label="Stok" className="numeric">{numberText(product.stock)}</td>
-                      <td data-label="Fiyat" className="numeric">{money(product.price)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-            <footer className="panel-footer">
-              <span>Toplam {numberText(filteredStock.length)} ürün</span>
-              <Pager total={filteredStock.length} pageSize={10} />
-            </footer>
-          </article>
         </section>
 
         <section id="branches" className="mini-grid">
