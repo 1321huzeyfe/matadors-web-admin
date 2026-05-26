@@ -81,7 +81,7 @@ function todayKey() {
 function rowBranch(row: Row, selectedBranch = "") {
   return (
     branchOf(row)
-      || first(row, ["cashier_id", "device_id", "user_id", "cashier", "kasa", "branch", "profile"], "")
+      || first(row, ["branch", "profile", "kasa"], "")
       || selectedBranch
       || "genel-kasa"
   );
@@ -199,8 +199,6 @@ export default async function Page({ searchParams }: { searchParams?: { branch?:
   const activeBranchLabel = pageActiveBranchLabel;
   const visibleBalances = filteredBalances.slice(0, 10);
   const visibleStock = filteredStock.slice(0, 10);
-  const visibleUnmatchedBalances = data.unmatchedBalances.slice(0, 10);
-  const visibleUnmatchedStock = data.unmatchedStock.slice(0, 10);
   const debug = {
     ...data.debug,
     filteredCustomers: filteredBalances.length,
@@ -237,6 +235,11 @@ export default async function Page({ searchParams }: { searchParams?: { branch?:
           </section>
         )}
 
+        <section className="readonly-notice" aria-label="Salt okunur panel bilgisi">
+          <strong>Salt okunur mod</strong>
+          <span>Web panel salt-okunur modda çalışır. Veri yönetimi masaüstü uygulamadan yapılır.</span>
+        </section>
+
         <section className="metrics" aria-label="Özet kartları">
           <StatCard tone="blue" icon="users" label="Toplam Müşteri" value={numberText(pageSummary.customerCount)} hint="Aktif müşteriler" />
           <StatCard tone="green" icon="cash" label="Toplam Bakiye" value={money(pageSummary.totalBalance)} hint="Tüm müşterilerin bakiyesi" />
@@ -245,6 +248,8 @@ export default async function Page({ searchParams }: { searchParams?: { branch?:
         </section>
 
         <BranchManagement branches={data.branchManagement} />
+
+        <ProductTools branch={pageActiveBranch} products={filteredStock} />
 
         <section className="panel-grid primary-panels">
           <article id="customers" className="panel data-panel">
@@ -313,47 +318,6 @@ export default async function Page({ searchParams }: { searchParams?: { branch?:
           </article>
         </section>
 
-        <section className="panel-grid stock-action-section">
-          <ProductTools branch={pageActiveBranch} products={filteredStock} />
-        </section>
-
-        {(data.unmatchedBalances.length > 0 || data.unmatchedStock.length > 0) && (
-          <section className="panel-grid primary-panels">
-            <article className="panel data-panel">
-              <div className="panel-heading">
-                <div className="panel-title">
-                  <span className="panel-icon orange"><Icon name="report" /></span>
-                  <h2>Eşleşmemiş Kayıtlar</h2>
-                </div>
-              </div>
-              <div className="table-frame">
-                <table>
-                  <thead><tr><th>Tür</th><th>Ad</th><th className="numeric">Değer</th></tr></thead>
-                  <tbody>
-                    {visibleUnmatchedBalances.map((customer) => (
-                      <tr key={`unmatched-customer-${customer.name}`}>
-                        <td data-label="Tür">Müşteri</td>
-                        <td data-label="Ad" className="strong-cell">{customer.name}</td>
-                        <td data-label="Değer" className={`numeric ${balanceClass(customer.balance)}`}>{money(customer.balance)}</td>
-                      </tr>
-                    ))}
-                    {visibleUnmatchedStock.map((product) => (
-                      <tr key={`unmatched-product-${product.id || product.name}`}>
-                        <td data-label="Tür">Ürün</td>
-                        <td data-label="Ad" className="strong-cell">{product.name}</td>
-                        <td data-label="Değer" className="numeric">{numberText(product.stock)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-              <footer className="panel-footer">
-                <span>Kasa kimliği olmayan kayıtlar toplam kasalara dahil edilmez.</span>
-              </footer>
-            </article>
-          </section>
-        )}
-
         <section id="branches" className="mini-grid">
           <article className="mini-card">
             <strong>Bugünkü satış</strong>
@@ -373,7 +337,7 @@ export default async function Page({ searchParams }: { searchParams?: { branch?:
         <details className="debug-details">
           <summary aria-label="Debug bilgilerini göster">debug</summary>
           <section className="debug-strip">
-            buildVersion: {debug.buildVersion}, warnings: {JSON.stringify(debug.warnings)}, dataBranchKeys: {JSON.stringify(debug.dataBranchKeys)}, activeUserBranchKeys: {JSON.stringify(debug.activeUserBranchKeys)}, inactiveBranchKeys: {JSON.stringify(debug.inactiveBranchKeys)}, systemBranchKeys: {JSON.stringify(debug.systemBranchKeys)}, visibleBranchKeys: {JSON.stringify(debug.visibleBranchKeys)}, dropdownBranches: {JSON.stringify(debug.dropdownBranches)}, userBranchesWithoutData: {JSON.stringify(debug.userBranchesWithoutData)}, dataBranchesWithoutUser: {JSON.stringify(debug.dataBranchesWithoutUser)}, sampleCustomerBranchKeys: {JSON.stringify(debug.sampleCustomerBranchKeys)}, sampleProductBranchKeys: {JSON.stringify(debug.sampleProductBranchKeys)}, sampleSaleBranchKeys: {JSON.stringify(debug.sampleSaleBranchKeys)}, customers before/after: {numberText(debug.customersBefore)}/{numberText(debug.customersAfter)}, products before/after: {numberText(debug.productsBefore)}/{numberText(debug.productsAfter)}, sales before/after: {numberText(debug.salesBefore)}/{numberText(debug.salesAfter)}, selectedKey: {debug.selectedKey}
+            buildVersion: {debug.buildVersion}, warnings: {JSON.stringify(debug.warnings)}, visibleActiveCashiers: {JSON.stringify(debug.visibleActiveCashiers)}, passiveCashiers: {JSON.stringify(debug.passiveCashiers)}, visibleInactiveCashiers: {JSON.stringify(debug.visibleInactiveCashiers)}, activeUserBranches: {JSON.stringify(debug.activeUserBranches)}, hiddenSystemBranches: {JSON.stringify(debug.hiddenSystemBranches)}, hiddenSystemUsers: {JSON.stringify(debug.hiddenSystemUsers)}, orphanDataBranches: {JSON.stringify(debug.orphanDataBranches)}, riskyNumericCashierIdRows: {JSON.stringify(debug.riskyNumericCashierIdRows)}, emptyBranchRows: {JSON.stringify(debug.emptyBranchRows)}, blockedBranches: {JSON.stringify(debug.blockedBranches)}, canonicalMap: {JSON.stringify(debug.canonicalMap)}, visibleBranches: {JSON.stringify(debug.visibleBranches)}, dataBranchKeys: {JSON.stringify(debug.dataBranchKeys)}, activeUserBranchKeys: {JSON.stringify(debug.activeUserBranchKeys)}, inactiveBranchKeys: {JSON.stringify(debug.inactiveBranchKeys)}, systemBranchKeys: {JSON.stringify(debug.systemBranchKeys)}, visibleBranchKeys: {JSON.stringify(debug.visibleBranchKeys)}, dropdownBranches: {JSON.stringify(debug.dropdownBranches)}, userBranchesWithoutData: {JSON.stringify(debug.userBranchesWithoutData)}, dataBranchesWithoutUser: {JSON.stringify(debug.dataBranchesWithoutUser)}, sampleCustomerBranchKeys: {JSON.stringify(debug.sampleCustomerBranchKeys)}, sampleProductBranchKeys: {JSON.stringify(debug.sampleProductBranchKeys)}, sampleSaleBranchKeys: {JSON.stringify(debug.sampleSaleBranchKeys)}, customers before/after: {numberText(debug.customersBefore)}/{numberText(debug.customersAfter)}, products before/after: {numberText(debug.productsBefore)}/{numberText(debug.productsAfter)}, sales before/after: {numberText(debug.salesBefore)}/{numberText(debug.salesAfter)}, selectedKey: {debug.selectedKey}
           </section>
         </details>
       </main>

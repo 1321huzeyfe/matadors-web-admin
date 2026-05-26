@@ -711,15 +711,36 @@ tbody tr:hover {
   opacity: 0.56;
 }
 
+.readonly-notice {
+  align-items: center;
+  background: #eef6ff;
+  border: 1px solid #bfdbfe;
+  border-radius: 8px;
+  color: #1e3a8a;
+  display: flex;
+  gap: 10px;
+  justify-content: space-between;
+  margin: 18px 0 24px;
+  padding: 12px 16px;
+}
+
+.readonly-notice strong {
+  color: #172554;
+  font-size: 13px;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.readonly-notice span {
+  font-size: 13px;
+  font-weight: 760;
+  text-align: right;
+}
+
 .mini-grid {
   display: grid;
   gap: 16px;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  margin-top: 24px;
-}
-
-.stock-action-section {
-  grid-template-columns: 1fr;
   margin-top: 24px;
 }
 
@@ -774,6 +795,20 @@ tbody tr:hover {
   overflow-wrap: anywhere;
 }
 
+.branch-row-main em {
+  color: var(--muted);
+  display: inline-block;
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 900;
+  margin-top: 6px;
+  text-transform: uppercase;
+}
+
+.branch-row-passive {
+  opacity: 0.72;
+}
+
 .branch-row-counts {
   display: flex;
   flex-wrap: wrap;
@@ -825,6 +860,26 @@ tbody tr:hover {
   display: grid;
   gap: 10px;
   grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.form-row.three {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.management-form {
+  border-bottom: 1px solid var(--line);
+  display: grid;
+  gap: 12px;
+  margin: 0 18px 18px;
+  padding: 0 0 18px;
+}
+
+.management-form label {
+  color: var(--muted);
+  display: grid;
+  font-size: 13px;
+  font-weight: 820;
+  gap: 8px;
 }
 
 .form-message {

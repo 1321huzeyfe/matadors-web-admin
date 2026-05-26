@@ -32,11 +32,30 @@ export type PanelData = {
     dataBranchKeys: string[];
     activeBranchKeys: string[];
     activeUserBranchKeys: string[];
+    activeUserBranches: string[];
+    visibleActiveCashiers: string[];
+    visibleInactiveCashiers: string[];
+    passiveCashiers: string[];
     systemBranchKeys: string[];
+    hiddenSystemBranches: string[];
+    hiddenSystemUsers: CashierDebugRow[];
     inactiveBranchKeys: string[];
     visibleBranchKeys: string[];
+    visibleBranches: string[];
+    orphanBranches: string[];
+    orphanDataBranches: string[];
     userBranchesWithoutData: string[];
     dataBranchesWithoutUser: string[];
+    canonicalMap: Record<string, string[]>;
+    riskyNumericCashierIdRows: Array<{ table: string; id: string; branchKey: string; cashierId: string; cashierUserBranch: string; reason: string }>;
+    emptyBranchRows: Array<{ table: string; count: number }>;
+    blockedBranches: string[];
+    syncStatus: {
+      ok: boolean;
+      errors: number;
+      fetched: { users: number; customers: number; products: number; sales: number };
+      updatedAt: string;
+    };
     sampleCustomerBranchKeys: string[];
     sampleProductBranchKeys: string[];
     sampleSaleBranchKeys: string[];
@@ -63,12 +82,12 @@ export type PanelData = {
 };
 
 const TABLES = ["users", "customers", "products", "sales"] as const;
-const STABLE_BRANCH_KEYS = ["branch_id", "kasa_id", "profile_id", "owner_id", "cashier_id", "user_id"] as const;
-const BUILD_VERSION = "branch-visibility-delete-v9";
+const STABLE_BRANCH_KEYS = ["stable_key", "branch_id", "profile_id", "kasa_id"] as const;
+const BUILD_VERSION = "cashier-identity-v12-no-numeric-fallback";
 const HUMAN_USER_LABEL_KEYS = ["display_name", "name", "full_name"] as const;
 const SYSTEM_BRANCH_VALUES = ["kasa_ops", "kasa_perf", "ops", "perf", "performance", "benchmark", "loadtest", "test", "seed", "demo", "dev", "internal"] as const;
 export type BranchOption = { key: string; label: string };
-export type BranchDeleteSummary = { key: string; label: string; customers: number; products: number; sales: number; users: number };
+export type BranchDeleteSummary = { key: string; label: string; customers: number; products: number; sales: number; users: number; isActive: boolean };
 type BranchGroup = { key: string; label: string; aliases: Set<string> };
 type CashierDebugRow = {
   role: string;
@@ -127,8 +146,17 @@ function firstNumber(row: Row, keys: readonly string[]): number {
   return 0;
 }
 
-export function normalizeBranch(value: string): string {
-  return value.trim().toLowerCase();
+export function normalizeBranch(value: unknown): string {
+  let clean = stringValue(value).trim().toLowerCase();
+  if (clean === "none" || clean === "null" || clean === "undefined" || clean === "empty") return "";
+  if (clean.startsWith("branch_id:")) clean = clean.slice("branch_id:".length);
+  clean = clean
+    .replace(/\s+/g, "_")
+    .replace(/[^a-z0-9Ä±ÄŸÃ¼ÅŸÃ¶Ã§_-]+/gi, "_")
+    .replace(/_+/g, "_")
+    .replace(/^[_-]+|[_-]+$/g, "");
+  const compact = clean.match(/^(kasa|cashier)[_-]+(\d+)$/);
+  return compact ? `${compact[1]}${compact[2]}` : clean;
 }
 
 export function branchOf(row: Row): string {
@@ -136,20 +164,21 @@ export function branchOf(row: Row): string {
 }
 
 function cleanBranchValue(value: unknown): string {
-  const clean = stringValue(value).trim();
-  const lowered = clean.toLowerCase();
-  if (!clean || lowered === "null" || lowered === "undefined") return "";
-  return clean.replace(/\s+/g, " ");
+  return normalizeBranch(value);
 }
 
 function branchKeyValue(value: unknown): string {
-  const clean = cleanBranchValue(value).toLowerCase().replace(/\s+/g, "");
-  return clean.startsWith("branch_id:") ? clean.slice("branch_id:".length) : clean;
+  return normalizeBranch(value);
 }
 
 function canonicalBranchKey(value: unknown): string {
   const clean = branchKeyValue(value);
   return clean && !isAdminLikeBranch(clean) ? `branch_id:${clean}` : "";
+}
+
+function rawBranchKey(value: unknown): string {
+  const clean = branchKeyValue(value);
+  return clean ? `branch_id:${clean}` : "";
 }
 
 function stableBranchKey(row: Row): string {
@@ -170,7 +199,8 @@ function stableBranchAliases(row: Row): string[] {
 }
 
 function userBranchValue(row: Row): string {
-  return cleanBranchValue(valueOf(row, "branch_id"));
+  const direct = cleanBranchValue(valueOf(row, "stable_key")) || cleanBranchValue(valueOf(row, "branch_id")) || cleanBranchValue(valueOf(row, "profile_id")) || cleanBranchValue(valueOf(row, "kasa_id"));
+  return direct || (isCashierLikeRole(row) ? cleanBranchValue(valueOf(row, "username")) : "");
 }
 
 function userBranchKey(row: Row): string {
@@ -183,11 +213,6 @@ function userBranchAliases(row: Row): string[] {
   if (value && !isAdminLikeBranch(value)) {
     const key = canonicalBranchKey(value);
     if (key) aliases.add(key);
-  }
-  const id = userId(row);
-  if (id) {
-    const idKey = canonicalBranchKey(id);
-    if (idKey) aliases.add(idKey);
   }
   return Array.from(aliases);
 }
@@ -252,12 +277,12 @@ function isAdminLikeBranch(branch: string): boolean {
 export function isSystemBranchValue(value: string): boolean {
   const clean = normalizeBranch(value).replace(/[^a-z0-9ığüşöç]+/gi, "_").replace(/^_+|_+$/g, "");
   if (!clean) return false;
-  const tokens = clean.split("_").filter(Boolean);
+  const tokens = clean.split(/[_-]+/).filter(Boolean);
   return SYSTEM_BRANCH_VALUES.some((blocked) => clean === blocked || tokens.includes(blocked));
 }
 
 function isDropdownBranchValue(value: string): boolean {
-  const clean = value.trim();
+  const clean = normalizeBranch(value);
   return Boolean(clean) && !isSystemBranchValue(clean) && !isAdminLikeBranch(clean);
 }
 
@@ -281,12 +306,12 @@ function blockedCashierField(row: Row): string {
 }
 
 function isCashierCandidate(row: Row): boolean {
-  const branchId = first(row, ["branch_id"], "").trim();
+  const branchId = userBranchValue(row);
   return isCashierLikeRole(row) || Boolean(branchId && !isAdminLikeBranch(branchId));
 }
 
 function cashierRejectReason(row: Row): string {
-  const branchId = first(row, ["branch_id"], "").trim();
+  const branchId = userBranchValue(row);
   if (!isActive(row)) return "inactive";
   if (!isCashierCandidate(row)) return "wrong_role";
   if (!branchId) return "no_branch_id";
@@ -336,7 +361,7 @@ function isDisplayBranch(value: string): boolean {
 }
 
 function branchKeyFromCandidates(candidates: string[]): string {
-  const visible = candidates.filter(isDisplayBranch);
+  const visible = candidates.map(normalizeBranch).filter(isDisplayBranch);
   const named = visible.find((candidate) => /[a-zA-ZığüşöçİĞÜŞÖÇ]/.test(candidate) && !/^kasa[_\s-]*\d+$/i.test(candidate));
   if (named) return named.trim();
   const kasaNumber = visible
@@ -347,8 +372,17 @@ function branchKeyFromCandidates(candidates: string[]): string {
 }
 
 function isCashierUser(row: Row): boolean {
-  const branchId = first(row, ["branch_id"], "").trim();
-  return isActive(row) && isCashierCandidate(row) && isDropdownBranchValue(branchId) && !hasBlockedCashierValue(row);
+  return isVisibleUserBranch(userBranchValue(row), row);
+}
+
+function isRealCashierUser(row: Row): boolean {
+  const branch = userBranchValue(row);
+  return isCashierCandidate(row) && isDropdownBranchValue(branch) && !hasBlockedCashierValue(row);
+}
+
+export function isVisibleUserBranch(branchId: string, userRecord: Row): boolean {
+  const branch = normalizeBranch(branchId) || userBranchValue(userRecord);
+  return isActive(userRecord) && isDropdownBranchValue(branch) && isRealCashierUser(userRecord);
 }
 
 function actorId(row: Row): string {
@@ -454,6 +488,53 @@ function filterUnmatchedRows(rows: Row[], scope: ReturnType<typeof buildBranchGr
   return rows.filter((row) => isActive(row) && !isRealBranchRow(row, scope));
 }
 
+function emptyBranchRowSummary(tables: Array<{ table: string; rows: Row[] }>): Array<{ table: string; count: number }> {
+  return tables
+    .map((item) => ({
+      table: item.table,
+      count: item.rows.filter((row) => isActive(row) && !stableBranchKey(row)).length
+    }))
+    .filter((item) => item.count > 0);
+}
+
+function riskyNumericCashierRows(
+  tables: Array<{ table: string; rows: Row[] }>,
+  usersById: Map<string, string>
+): Array<{ table: string; id: string; branchKey: string; cashierId: string; cashierUserBranch: string; reason: string }> {
+  const risky: Array<{ table: string; id: string; branchKey: string; cashierId: string; cashierUserBranch: string; reason: string }> = [];
+  for (const item of tables) {
+    for (const row of item.rows) {
+      if (!isActive(row)) continue;
+      const branchKey = stableBranchKey(row);
+      const cashierId = first(row, ["cashier_id"], "");
+      if (!cashierId) continue;
+      const cashierUserBranch = usersById.get(cashierId) || "";
+      if (!branchKey) {
+        risky.push({
+          table: item.table,
+          id: first(row, ["id"], ""),
+          branchKey: "",
+          cashierId,
+          cashierUserBranch,
+          reason: "empty_branch_with_numeric_cashier_id"
+        });
+        continue;
+      }
+      if (cashierUserBranch && normalizeBranch(cashierUserBranch) !== normalizeBranch(branchKey)) {
+        risky.push({
+          table: item.table,
+          id: first(row, ["id"], ""),
+          branchKey,
+          cashierId,
+          cashierUserBranch,
+          reason: "cashier_id_points_to_different_user_branch"
+        });
+      }
+    }
+  }
+  return risky.slice(0, 200);
+}
+
 function filterBranch(rows: Row[], group?: BranchGroup): Row[] {
   if (!group) return rows;
   return rows.filter((row) => matchingGroup(row, [group]));
@@ -476,7 +557,7 @@ export async function select(table: string): Promise<Row[]> {
   const key = env("SUPABASE_SERVICE_ROLE_KEY");
   if (!url || !key) throw new Error("SUPABASE_URL veya SUPABASE_SERVICE_ROLE_KEY eksik.");
 
-  const response = await fetch(`${url}/rest/v1/${table}?select=*`, {
+  const response = await fetch(`${url}/rest/v1/${table}?select=*&limit=5000`, {
     headers: {
       apikey: key,
       Authorization: `Bearer ${key}`,
@@ -509,10 +590,22 @@ export async function loadPanelData(selectedBranch = ""): Promise<PanelData> {
     .map((row) => ({ ...cashierDebugRow(row), reason: cashierRejectReason(row) }))
     .filter((row) => row.reason)
     .slice(0, 10);
+  const usersByNumericId = new Map(
+    usersResult.rows
+      .map((row) => [userId(row), userBranchKey(row)] as const)
+      .filter(([id, branch]) => Boolean(id && branch))
+  );
   const usersAllRaw = usersResult.rows.filter(isActive).map(withStableBranch);
   const customersRaw = customersResult.rows.filter(hasRealBranchId).map(withStableBranch);
   const productsRaw = productsResult.rows.filter(hasRealBranchId).map(withStableBranch);
   const salesRaw = salesResult.rows.filter(hasRealBranchId).map(withStableBranch);
+  const dataTables = [
+    { table: "customers", rows: customersResult.rows },
+    { table: "products", rows: productsResult.rows },
+    { table: "sales", rows: salesResult.rows }
+  ];
+  const emptyBranchRows = emptyBranchRowSummary(dataTables);
+  const riskyNumericCashierIdRows = riskyNumericCashierRows(dataTables, usersByNumericId);
   const activeCustomersRaw = customersRaw.filter(isActive);
   const activeProductsRaw = productsRaw.filter(isActive);
   const activeSalesRaw = salesRaw.filter(isActive);
@@ -531,38 +624,61 @@ export async function loadPanelData(selectedBranch = ""): Promise<PanelData> {
     .filter(hasBlockedCashierValue)
     .map((row) => userBranchKey(row) || stableBranchKey(row))
     .filter(Boolean))).sort();
+  const hiddenSystemUsers = cashierCandidateRows.filter(hasBlockedCashierValue).map(cashierDebugRow);
+  const adminBranchKeys = Array.from(new Set(usersResult.rows
+    .filter((row) => roleValue(row) === "admin" || isAdminLikeBranch(userBranchValue(row)))
+    .map((row) => rawBranchKey(userBranchValue(row)))
+    .filter(Boolean))).sort();
   const inactiveBranchKeys = Array.from(new Set(cashierCandidateRows
-    .filter((row) => !isActive(row))
+    .filter((row) => !isActive(row) && isRealCashierUser(row))
     .map((row) => userBranchKey(row) || stableBranchKey(row))
     .filter(Boolean))).sort();
   const activeUserBranchKeys = Array.from(new Set(cashierCandidateRows
-    .filter((row) => isActive(row) && !hasBlockedCashierValue(row) && isDropdownBranchValue(userBranchValue(row)))
+    .filter((row) => isVisibleUserBranch(userBranchValue(row), row))
     .map(userBranchKey)
     .filter(Boolean))).sort();
+  const managementUserBranchKeys = Array.from(new Set([...activeUserBranchKeys, ...inactiveBranchKeys])).sort();
 
   for (const user of cashierCandidateRows) {
     const key = userBranchKey(user);
     if (key && !labelsByKey.has(key)) labelsByKey.set(key, labelForRow(user, key));
   }
 
+  const canonicalMap: Record<string, string[]> = {};
+  for (const row of cashierCandidateRows.filter(isRealCashierUser)) {
+    const key = userBranchKey(row);
+    if (!key) continue;
+    canonicalMap[key] = Array.from(new Set([...(canonicalMap[key] || []), ...userBranchAliases(row)])).sort();
+  }
+
   const systemBranchSet = new Set(systemBranchKeys);
   const inactiveBranchSet = new Set(inactiveBranchKeys);
-  const visibleBranchKeys = Array.from(new Set([...dataBranchKeys, ...activeUserBranchKeys]))
+  const systemBranchNormalizedSet = new Set(systemBranchKeys.map(normalizeBranch));
+  const inactiveBranchNormalizedSet = new Set(inactiveBranchKeys.map(normalizeBranch));
+  const visibleBranchKeys = Array.from(new Set(activeUserBranchKeys))
     .filter((key) => key && !systemBranchSet.has(key) && !inactiveBranchSet.has(key) && isDropdownBranchValue(branchValueFromKey(key)))
     .sort();
-  const userBranchKeys = Array.from(new Set([...activeUserBranchKeys, ...systemBranchKeys, ...inactiveBranchKeys])).sort();
+  const userBranchKeys = Array.from(new Set([...managementUserBranchKeys, ...systemBranchKeys])).sort();
   const userBranchKeySet = new Set(userBranchKeys);
   const dataBranchKeyLookup = new Set(dataBranchKeys);
   const userBranchesWithoutData = userBranchKeys.filter((key) => !dataBranchKeyLookup.has(key));
   const dataBranchesWithoutUser = dataBranchKeys.filter((key) => !userBranchKeySet.has(key));
+  const orphanBranches = dataBranchesWithoutUser.filter((key) => !systemBranchSet.has(key) && !inactiveBranchSet.has(key));
+  const blockedBranches = Array.from(new Set([
+    ...systemBranchKeys,
+    ...adminBranchKeys,
+    ...orphanBranches,
+    ...(emptyBranchRows.length ? ["empty/null"] : [])
+  ])).sort();
   const warnings: string[] = [];
   if (visibleBranchKeys.length === 0) warnings.push("visibleBranchKeys empty; check branch classification.");
 
   const visibleGroups = branchGroupsFromKeys(visibleBranchKeys, labelsByKey);
+  const managementGroups = branchGroupsFromKeys(managementUserBranchKeys, labelsByKey);
   const scope = { groups: visibleGroups, cashierIds: new Set<string>(), adminIds: new Set<string>() };
   const activeGroup = selectedGroup(selectedBranch, visibleGroups);
   const requestedSelectedKey = selectedBranch ? normalizeBranch(selectedBranch) : "";
-  const selectedIsBlocked = Boolean(requestedSelectedKey && (systemBranchSet.has(requestedSelectedKey) || inactiveBranchSet.has(requestedSelectedKey)));
+  const selectedIsBlocked = Boolean(requestedSelectedKey && (systemBranchNormalizedSet.has(requestedSelectedKey) || inactiveBranchNormalizedSet.has(requestedSelectedKey)));
   if (selectedIsBlocked) warnings.push("Selected branch is inactive or system-owned; data hidden.");
   const effectiveBranch = activeGroup?.key || (selectedIsBlocked ? selectedBranch : "");
   const visibleBranchSet = new Set(visibleBranchKeys.map(normalizeBranch));
@@ -583,13 +699,17 @@ export async function loadPanelData(selectedBranch = ""): Promise<PanelData> {
   const today = todayKey();
   const todaySales = sales.filter((sale) => dateKey(saleDateRaw(sale)) === today);
   const branches = uniqueBranchOptions(visibleGroups);
-  const branchManagement = visibleGroups.map((group) => ({
+  const branchManagement = managementGroups.map((group) => ({
     key: group.key,
     label: branches.find((branch) => branch.key === group.key)?.label || group.label,
+    isActive: activeUserBranchKeys.includes(group.key),
     customers: countRowsForGroup(customersRaw, group),
     products: countRowsForGroup(productsRaw, group),
     sales: countRowsForGroup(salesRaw, group),
-    users: usersResult.rows.filter((row) => userBranchAliases(row).some((alias) => normalizeBranch(alias) === normalizeBranch(group.key))).length
+    users: usersResult.rows.filter((row) => (
+      isRealCashierUser(row)
+      && userBranchAliases(row).some((alias) => normalizeBranch(alias) === normalizeBranch(group.key))
+    )).length
   }));
 
   const byBranchMap = new Map<string, PanelData["byBranch"][number]>();
@@ -663,20 +783,44 @@ export async function loadPanelData(selectedBranch = ""): Promise<PanelData> {
       buildVersion: BUILD_VERSION,
       dataBranchKeys,
       activeUserBranchKeys,
+      activeUserBranches: activeUserBranchKeys,
+      visibleActiveCashiers: activeUserBranchKeys,
+      visibleInactiveCashiers: inactiveBranchKeys,
+      passiveCashiers: inactiveBranchKeys,
       inactiveBranchKeys,
       systemBranchKeys,
+      hiddenSystemBranches: systemBranchKeys,
+      hiddenSystemUsers,
       visibleBranchKeys,
+      visibleBranches: visibleBranchKeys,
+      orphanBranches,
+      orphanDataBranches: orphanBranches,
+      riskyNumericCashierIdRows,
+      emptyBranchRows,
+      blockedBranches,
       dropdownBranches: branches.map((branch) => branch.label),
       warning: warnings[0] || "",
       warnings,
       activeBranchKeys: visibleBranchKeys,
       userBranchesWithoutData,
       dataBranchesWithoutUser,
+      canonicalMap,
+      syncStatus: {
+        ok: errors.length === 0,
+        errors: errors.length,
+        fetched: {
+          users: usersResult.rows.length,
+          customers: customersResult.rows.length,
+          products: productsResult.rows.length,
+          sales: salesResult.rows.length
+        },
+        updatedAt: new Date().toISOString()
+      },
       sampleCustomerBranchKeys: customersRaw.map(stableBranchKey).filter(Boolean).slice(0, 10),
       sampleProductBranchKeys: productsRaw.map(stableBranchKey).filter(Boolean).slice(0, 10),
       sampleSaleBranchKeys: salesRaw.map(stableBranchKey).filter(Boolean).slice(0, 10),
       rawUsersCount: usersResult.rows.length,
-      activeUsersCount: usersAllRaw.length,
+      activeUsersCount: cashierCandidateRows.filter((row) => isVisibleUserBranch(userBranchValue(row), row)).length,
       cashierCandidates: cashierCandidateRows.map(cashierDebugRow).slice(0, 10),
       rejectedCashiers,
       apiCustomers: customersResult.rows.length,
@@ -696,40 +840,4 @@ export async function loadPanelData(selectedBranch = ""): Promise<PanelData> {
       unmatchedProducts: unmatchedProducts.length
     }
   };
-}
-
-export async function loadWritableBranches(): Promise<Array<{ branch: string; branchValue: string; cashierId: string; label: string }>> {
-  const users = (await select("users")).filter(isCashierUser);
-  const rows = users
-    .map((user) => {
-      const branch = userBranchKey(user);
-      return {
-        branch,
-        branchValue: branchValueFromKey(branch),
-        cashierId: first(user, ["id", "cashier_id"], ""),
-        label: labelForRow(user, branch)
-      };
-    })
-    .filter((row) => row.branch && row.cashierId && !isAdminLikeBranch(row.branch));
-  return rows.sort((a, b) => a.label.localeCompare(b.label, "tr"));
-}
-
-export async function restRequest(table: string, init: RequestInit & { query?: string } = {}) {
-  const url = env("SUPABASE_URL").replace(/\/+$/, "");
-  const key = env("SUPABASE_SERVICE_ROLE_KEY");
-  if (!url || !key) throw new Error("SUPABASE_URL veya SUPABASE_SERVICE_ROLE_KEY eksik.");
-  const response = await fetch(`${url}/rest/v1/${table}${init.query || ""}`, {
-    ...init,
-    headers: {
-      apikey: key,
-      Authorization: `Bearer ${key}`,
-      "Content-Type": "application/json",
-      Prefer: "return=representation",
-      ...(init.headers || {})
-    },
-    cache: "no-store"
-  });
-  const text = await response.text();
-  if (!response.ok) throw new Error(`${table}: ${response.status} ${text}`);
-  return text ? JSON.parse(text) : [];
 }

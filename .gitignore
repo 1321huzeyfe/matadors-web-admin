@@ -6,3 +6,25 @@ web_admin_panel/deploy_ready/
 assets/*.json
 **/__pycache__/
 *.pyc
+.vercel
+
+# Local/runtime data and logs
+MatadorsApp_Data/
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.jsonl
+*.log
+
+# Build, release, installer outputs
+build*/
+dist*/
+tmp_*/
+backups/
+*.exe
+web_admin_panel/tsconfig.tsbuildinfo
+.setup_stage/
+
+# Sensitive/manual Supabase helpers
+supabase_admin_bootstrap.sql
